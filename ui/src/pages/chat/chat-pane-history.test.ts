@@ -155,12 +155,12 @@ function appendChatThread(
   return thread;
 }
 
-function createNativeShowEarlierPane(request: ReturnType<typeof vi.fn>, scrollTop = 0) {
+function createNativeShowEarlierPane(request: ReturnType<typeof vi.fn>) {
   const client = { request } as unknown as GatewayBrowserClient;
   const result = createTestChatPane({ client, sessions: {} as SessionCapability });
   result.state.chatMessages = [nativeHistoryMessage(3), nativeHistoryMessage(4)];
   result.state.chatHistoryPagination = { hasMore: true, nextOffset: 2, totalMessages: 4 };
-  const thread = appendChatThread(result.pane, { scrollTop });
+  const thread = appendChatThread(result.pane);
   vi.spyOn(result.pane, "updateComplete", "get").mockReturnValue(Promise.resolve(true));
   const scrollToOffset = vi.spyOn(result.pane.transcript, "scrollToOffset");
   return { ...result, scrollToOffset, thread };
@@ -451,12 +451,12 @@ describe("chat pane native history pagination", () => {
     await vi.waitFor(() => expect(revealMessage).toHaveBeenCalledWith("source-message"));
     expect(request).toHaveBeenNthCalledWith(1, "chat.history", {
       sessionKey: state.sessionKey,
-      limit: 100,
+      limit: 400,
       offset: 2,
     });
     expect(request).toHaveBeenNthCalledWith(2, "chat.history", {
       sessionKey: state.sessionKey,
-      limit: 100,
+      limit: 400,
       offset: 4,
     });
     expect(pane.currentReplyNavigationId(state.sessionKey)).toBeNull();
@@ -519,16 +519,6 @@ describe("chat pane native history pagination", () => {
     expect(pane.hasOlderMessages()).toBe(false);
   });
 
-  it("shows already-loaded earlier history one viewport up without requesting a page", async () => {
-    const request = vi.fn();
-    const { pane, thread } = createNativeShowEarlierPane(request, 1_200);
-
-    await pane.showEarlierMessages();
-
-    expect(thread.scrollTop).toBe(700);
-    expect(request).not.toHaveBeenCalled();
-  });
-
   it("loads at the top through the canonical path and reveals the prepended window", async () => {
     const request = vi.fn(async () => ({
       messages: [nativeHistoryMessage(1), nativeHistoryMessage(2)],
@@ -542,7 +532,7 @@ describe("chat pane native history pagination", () => {
 
     expect(request).toHaveBeenCalledWith("chat.history", {
       sessionKey: state.sessionKey,
-      limit: 100,
+      limit: 400,
       offset: 2,
     });
     expect(state.chatMessages.map(nativeHistorySeq)).toEqual([1, 2, 3, 4]);
@@ -884,7 +874,7 @@ describe("chat pane native history pagination", () => {
 
     expect(request).toHaveBeenCalledWith("chat.history", {
       sessionKey: state.sessionKey,
-      limit: 100,
+      limit: 400,
       offset: 2,
     });
     expect(state.chatMessages.map(nativeHistorySeq)).toEqual([1, 2, 3, 4]);
@@ -944,7 +934,7 @@ describe("chat pane native history pagination", () => {
 
     expect(request).toHaveBeenNthCalledWith(1, "chat.history", {
       sessionKey: state.sessionKey,
-      limit: 100,
+      limit: 400,
       offset: 2,
     });
     expect(request).toHaveBeenNthCalledWith(

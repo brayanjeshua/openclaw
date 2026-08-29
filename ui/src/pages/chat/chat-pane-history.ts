@@ -142,7 +142,9 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
           void this.loadOlderMessages();
         }
       },
-      { root, rootMargin: "300px 0px 0px", threshold: 0 },
+      // Fire well before the wall: a page fetch takes long enough that a 300px
+      // margin guarantees the user hits the top before the prepend lands.
+      { root, rootMargin: "1200px 0px 0px", threshold: 0 },
     );
     this.historyObserverRoot = root;
     this.historyObserverSentinel = sentinel;
@@ -257,14 +259,6 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
     const state = this.state;
     const root = this.transcript.scrollElement;
     if (!state || !root) {
-      return;
-    }
-    if (root.scrollTop > CHAT_HISTORY_INTENT_EDGE_PX) {
-      const nextScrollTop = Math.max(0, root.scrollTop - root.clientHeight);
-      // Keep the observer's intent tracker aligned so this explicit page-up
-      // cannot masquerade as a user scroll and trigger an older-page load.
-      this.transcriptScrollTop = nextScrollTop;
-      root.scrollTop = nextScrollTop;
       return;
     }
     const sessionKey = state.sessionKey;
