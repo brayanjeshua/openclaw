@@ -5,7 +5,7 @@
 # Simple installs should prefer `openclaw update` / `openclaw update --channel
 # dev`; this script exists for checkouts that additionally need to:
 #   - preserve a local branch by rebasing it onto origin/main,
-#   - tolerate tracked build outputs that `pnpm build` rewrites,
+#   - refuse all tracked local changes, including build outputs,
 #   - build clean (incremental builds have shipped stale hashed chunks),
 #   - restart a custom service unit.
 #
@@ -15,9 +15,11 @@
 #   OPENCLAW_UPDATE_REMOTE       git remote to update from (default: origin)
 set -euo pipefail
 
+pnpm_dir=""
 log() { echo "[update-gateway] $*"; }
 on_exit() {
   local code=$?
+  if [ -n "$pnpm_dir" ]; then rm -rf "$pnpm_dir"; fi
   if [ "$code" -ne 0 ]; then
     echo "[update-gateway] FAILED (exit $code)" >&2
   fi
@@ -26,6 +28,26 @@ trap on_exit EXIT
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+
+# Validate the bootstrap before Git changes. The shim selects the target pin
+# only when invoked below, after ref selection; never activate a global version.
+if ! command -v corepack >/dev/null 2>&1; then
+  log "Corepack is required. Install a Corepack version compatible with the target pnpm pin, then retry."
+  exit 1
+fi
+pnpm_dir="$(mktemp -d "${TMPDIR:-/tmp}/openclaw-pnpm.XXXXXX")"
+if ! corepack enable --install-directory "$pnpm_dir" pnpm || [ ! -x "$pnpm_dir/pnpm" ]; then
+  log "Corepack could not create scoped pnpm shims. Repair Corepack before retrying; no Git update was attempted."
+  exit 1
+fi
+run_pnpm() (
+  # Source updates own downloads; do not wait for a Corepack terminal prompt.
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  export PATH="$pnpm_dir:$PATH"
+  export NPM_CONFIG_WORKSPACE_DIR="$repo_root" npm_config_workspace_dir="$repo_root"
+  export PNPM_CONFIG_LOCKFILE_DIR="$repo_root" pnpm_config_lockfile_dir="$repo_root"
+  "$pnpm_dir/pnpm" "$@"
+)
 
 remote="${OPENCLAW_UPDATE_REMOTE:-origin}"
 
@@ -80,7 +102,7 @@ else
 fi
 
 log "installing dependencies"
-pnpm install --frozen-lockfile
+run_pnpm install --frozen-lockfile
 
 # Incremental builds have left stale hashed chunks and config validators from
 # the previous revision in dist; a clean build is the reliable path.
@@ -95,7 +117,7 @@ for build_path in dist dist-runtime .artifacts; do
 done
 # The build owns cleanup under its checkout-local artifact lock. Deleting here
 # would race declaration writers and readers before that ownership is acquired.
-pnpm build
+run_pnpm build
 
 restart_cmd="${OPENCLAW_UPDATE_RESTART_CMD-openclaw gateway restart}"
 if [ -n "$restart_cmd" ]; then

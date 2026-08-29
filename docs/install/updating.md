@@ -119,10 +119,28 @@ service's Node path, and checks that Node version against the target release's
 
 Teams running a gateway directly from a git checkout on a server can update it
 with `scripts/update-gateway.sh` from inside that checkout. It is the reference
-for an efficient source-server update: it restores tracked build outputs that
-`pnpm build` rewrites, fails closed on any other local changes, fast-forwards
-`main` (or rebases a local server branch onto `origin/main`), installs
-dependencies, builds clean, and restarts the gateway.
+for a source-server update: it fails closed on all tracked local changes,
+including build outputs, fast-forwards `main` (or rebases a local server branch
+onto `origin/main`), installs dependencies with a frozen lockfile, builds clean,
+and restarts the gateway only after the build succeeds.
+
+This reference script requires usable **Corepack** before it changes Git state.
+Install a Corepack version compatible with the intended target's pnpm pin first.
+The script creates temporary Corepack shims without global activation. After Git
+selects the target, those shims resolve its pin; the same shim directory leads
+nested commands' `PATH`, and child workspace and lockfile roots are bound to the
+checkout. Bootstrap, install, or build failure prevents restart. The hosted
+[installers](/install/installer) also support npm-owned temporary provisioning
+when Corepack is unavailable; this server script deliberately requires Corepack.
+
+<Warning>
+A running older updater or server script keeps its old bootstrap code even if it
+checks out files containing this repair. If that older entry point invokes
+ambient pnpm, the operator must select a target-compatible pnpm launcher before
+the first update across the pin change. Validate that launcher against both the
+intended target and the known-good rollback ref before starting the update.
+Updating target files alone does not repair an older running binary.
+</Warning>
 
 Generated output roots such as `dist`, `dist-runtime`, and package-local
 `dist` directories must be real directories. Builds refuse symbolic-link roots
@@ -492,13 +510,23 @@ from immediately applying a newer release by setting
 
 ### Roll back a source checkout
 
-Use a clean checkout and select a known-good tag or commit:
+Use a clean checkout and select a known-good tag or commit. First verify that
+your Corepack bootstrap supports that ref's pnpm pin as described in
+[Source-checkout servers](#source-checkout-servers-reference-script):
 
 ```bash
 git fetch --all --tags
 git checkout --detach <known-good-tag-or-commit>
-pnpm install && pnpm build
-openclaw gateway restart
+(
+  pnpm_shims="$(mktemp -d "${TMPDIR:-/tmp}/openclaw-pnpm.XXXXXX")" || exit
+  trap 'rm -rf "$pnpm_shims"' EXIT
+  corepack enable --install-directory "$pnpm_shims" pnpm || exit
+  export PATH="$pnpm_shims:$PATH"
+  export NPM_CONFIG_WORKSPACE_DIR="$PWD" npm_config_workspace_dir="$PWD"
+  export PNPM_CONFIG_LOCKFILE_DIR="$PWD" pnpm_config_lockfile_dir="$PWD"
+  "$pnpm_shims/pnpm" install --frozen-lockfile || exit
+  "$pnpm_shims/pnpm" build
+) && openclaw gateway restart
 ```
 
 To return to latest: `git checkout main && git pull`.

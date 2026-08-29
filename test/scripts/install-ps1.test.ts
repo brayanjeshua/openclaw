@@ -224,7 +224,6 @@ describe("install.ps1 failure handling", () => {
           "$previousUpper = $env:PNPM_CONFIG_PREFER_OFFLINE",
           "$previousLower = $env:pnpm_config_prefer_offline",
           "$script:PnpmConfigValue = 'undefined'",
-          "function Get-PnpmCommandPath { return 'Get-TestPnpmConfig' }",
           "function Get-TestPnpmConfig {",
           "  param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)",
           "  if ($Arguments -join ' ' -ne 'config get prefer-offline') { throw \"unexpected pnpm command: $($Arguments -join ' ')\" }",
@@ -237,18 +236,18 @@ describe("install.ps1 failure handling", () => {
           "  New-Item -ItemType Directory -Force -Path $project | Out-Null",
           "  Remove-Item Env:PNPM_CONFIG_PREFER_OFFLINE -ErrorAction SilentlyContinue",
           "  Remove-Item Env:pnpm_config_prefer_offline -ErrorAction SilentlyContinue",
-          "  if (-not (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project)) { throw 'default was disabled' }",
+          "  if (-not (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project -PnpmCommand 'Get-TestPnpmConfig')) { throw 'default was disabled' }",
           "  $script:PnpmConfigValue = 'false'",
-          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project) { throw 'false pnpm config was ignored' }",
+          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project -PnpmCommand 'Get-TestPnpmConfig') { throw 'false pnpm config was ignored' }",
           "  $script:PnpmConfigValue = 'true'",
-          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project) { throw 'true pnpm config was ignored' }",
+          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project -PnpmCommand 'Get-TestPnpmConfig') { throw 'true pnpm config was ignored' }",
           "  $script:PnpmConfigValue = 'failure'",
-          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project) { throw 'failed pnpm config query enabled the default' }",
+          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project -PnpmCommand 'Get-TestPnpmConfig') { throw 'failed pnpm config query enabled the default' }",
           "  $env:PNPM_CONFIG_PREFER_OFFLINE = 'false'",
-          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project) { throw 'uppercase override was ignored' }",
+          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project -PnpmCommand 'Get-TestPnpmConfig') { throw 'uppercase override was ignored' }",
           "  Remove-Item Env:PNPM_CONFIG_PREFER_OFFLINE -ErrorAction SilentlyContinue",
           "  $env:pnpm_config_prefer_offline = 'false'",
-          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project) { throw 'lowercase override was ignored' }",
+          "  if (Test-ShouldPreferOfflinePnpmInstall -ProjectDir $project -PnpmCommand 'Get-TestPnpmConfig') { throw 'lowercase override was ignored' }",
           "} finally {",
           "  $env:PNPM_CONFIG_PREFER_OFFLINE = $previousUpper",
           "  $env:pnpm_config_prefer_offline = $previousLower",
@@ -1091,7 +1090,6 @@ describe("install.ps1 failure handling", () => {
   it("runs Windows command shims from a Windows-local cwd", () => {
     const commandSafeBody = extractFunctionBody(source, "Invoke-CommandFromWindowsSafeDirectory");
     const npmCommandBody = extractFunctionBody(source, "Invoke-NpmCommand");
-    const corepackCommandBody = extractFunctionBody(source, "Invoke-CorepackCommand");
     const openClawPathBody = extractFunctionBody(source, "Ensure-OpenClawOnPath");
     const ensurePnpmBody = extractFunctionBody(source, "Ensure-Pnpm");
     const mainBody = extractFunctionBody(source, "Main");
@@ -1102,12 +1100,13 @@ describe("install.ps1 failure handling", () => {
     expect(commandSafeBody).toContain("& $CommandPath @Arguments");
     expect(commandSafeBody).toContain("Pop-Location");
     expect(npmCommandBody).toContain("Invoke-CommandFromWindowsSafeDirectory");
-    expect(corepackCommandBody).toContain("Invoke-CommandFromWindowsSafeDirectory");
     expect(openClawPathBody).toContain('Invoke-NpmCommand -Arguments @("config", "get", "prefix")');
     expect(ensurePnpmBody).toContain(
-      'Invoke-CorepackCommand -Arguments @("prepare", $pnpmSpec, "--activate")',
+      '@("enable", "--install-directory", $InstallDirectory, "pnpm")',
     );
-    expect(ensurePnpmBody).toContain("Invoke-NpmCommand -Arguments $installArgs");
+    expect(ensurePnpmBody).toContain(
+      "Invoke-NpmCommand -CommandPath $npmCommand -Arguments $installArgs",
+    );
     expect(mainBody).toContain("Remove-PreviousNpmOwner");
     expect(mainBody).toContain("Remove-PreviousGitWrapper");
     expect(mainBody).toContain("Start-NpmShimBackup");
@@ -1300,7 +1299,7 @@ describe("install.ps1 failure handling", () => {
     expectBatchedPowerShellCase("emulated-arm64-downloads");
   });
 
-  it("activates the repo-pinned pnpm version for git installs", () => {
+  it("preserves git install budgets and guards with scoped pnpm selection", () => {
     const pnpmVersionBody = extractFunctionBody(source, "Get-RepoPnpmVersion");
     const pnpmVersionMatchBody = extractFunctionBody(source, "Test-PnpmCommandMatchesVersion");
     const ensurePnpmBody = extractFunctionBody(source, "Ensure-Pnpm");
@@ -1321,15 +1320,14 @@ describe("install.ps1 failure handling", () => {
     expect(ensurePnpmBody).toContain("Get-RepoPnpmVersion -RepoDir $RepoDir");
     expect(ensurePnpmBody).toContain("$pnpmSpec");
     expect(ensurePnpmBody).toContain(
-      "Test-PnpmCommandMatchesVersion -PnpmVersion $pnpmVersion -RepoDir $RepoDir",
+      "Test-PnpmCommandMatchesVersion -PnpmVersion $pnpmVersion -RepoDir $RepoDir -PnpmCommand $pnpmCommand",
     );
     expect(ensurePnpmBody).toContain(
-      'Invoke-CorepackCommand -Arguments @("prepare", $pnpmSpec, "--activate")',
+      '@("enable", "--install-directory", $InstallDirectory, "pnpm")',
     );
-    expect(ensurePnpmBody).toContain("Invoke-NpmCommand -Arguments $installArgs");
-    expect(ensurePnpmBody).toContain("$pnpmInstalled = ($LASTEXITCODE -eq 0)");
-    expect(ensurePnpmBody).toContain("if (-not $pnpmInstalled)");
-    expect(ensurePnpmBody).toContain('Invoke-NpmCommand -Arguments ($installArgs + @("--force"))');
+    expect(ensurePnpmBody).toContain(
+      "Invoke-NpmCommand -CommandPath $npmCommand -Arguments $installArgs",
+    );
     expect(gitFilterSupportBody).toContain("git clone -h");
     expect(gitFilterSupportBody).toContain("filter");
     expect(transactionalCloneBody).toContain('$cloneArgs += "--filter=blob:none"');
