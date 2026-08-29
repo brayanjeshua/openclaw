@@ -24,6 +24,7 @@ import { resolveMediaReferenceLocalPath } from "../../../media/media-reference.j
 import type { PromptImageOrderEntry } from "../../../media/prompt-image-order.js";
 import { finalizeRuntimePromptImages } from "../../../media/runtime-prompt-image-provenance.js";
 import { loadWebMedia, type WebMediaResult } from "../../../media/web-media.js";
+import type { UserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.types.js";
 import { resolveUserPath } from "../../../utils.js";
 import type { ImageSanitizationLimits } from "../../image-sanitization.js";
 import type { AgentMessage } from "../../runtime/index.js";
@@ -297,6 +298,7 @@ function modelSupportsImages(model: { input?: string[] }): boolean {
 
 export async function detectAndLoadPromptImages(params: {
   prompt: string;
+  userTurnTranscriptRecorder?: Pick<UserTurnTranscriptRecorder, "resolveMessage">;
   media?: readonly MediaFact[];
   workspaceDir: string;
   model: { input?: string[] };
@@ -327,8 +329,15 @@ export async function detectAndLoadPromptImages(params: {
       skippedCount: 0,
     };
   }
-  const media = normalizeMediaFacts(params.media);
-  const suppressed = new Set(params.mediaImageLayout?.suppressedFactIndexes ?? []);
+  // Deferred transcript preparation can carry fresher facts than the recorder's
+  // initial message. Resolve without persisting before choosing image ownership.
+  const message = await params.userTurnTranscriptRecorder?.resolveMessage();
+  const media = normalizeMediaFacts(
+    (message ? readPersistedMediaFacts(message) : undefined) ?? params.media,
+  );
+  const mediaImageLayout =
+    (message ? readPersistedMediaImageLayout(message) : undefined) ?? params.mediaImageLayout;
+  const suppressed = new Set(mediaImageLayout?.suppressedFactIndexes ?? []);
   const imageFactIndexes = media.flatMap((fact, factIndex) =>
     isImageMediaFact(fact) && fact.hydrationSuppressed !== true && !suppressed.has(factIndex)
       ? [factIndex]
@@ -363,8 +372,8 @@ export async function detectAndLoadPromptImages(params: {
           : ("offloaded" as const),
     }));
   })();
-  const slots = params.mediaImageLayout?.slots.length
-    ? params.mediaImageLayout.slots.filter(
+  const slots = mediaImageLayout?.slots.length
+    ? mediaImageLayout.slots.filter(
         (slot) => slot.factIndex === undefined || !suppressed.has(slot.factIndex),
       )
     : inferredSlots;
@@ -372,6 +381,7 @@ export async function detectAndLoadPromptImages(params: {
     slot.kind === "inline" ? [slot.factIndex ?? null] : [],
   );
   const existingIndexes =
+    (message ? readPersistedImageBlockFactIndexes(message) : undefined) ??
     params.existingImageFactIndexes ??
     (layoutInlineIndexes.length === (params.existingImages?.length ?? 0)
       ? layoutInlineIndexes
