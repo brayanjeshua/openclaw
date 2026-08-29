@@ -35,6 +35,7 @@ import {
   attachedEnvironment,
   credential,
   cleanupWorkerTurnLauncherTest,
+  computerDescriptor,
   createWorkerSessionTurnPlacementProvider,
   placements,
   root,
@@ -71,18 +72,7 @@ describe("worker turn launcher local placement", () => {
           (feature) => feature !== missingFeature,
         ),
       );
-      const computer = {
-        nodeId: "worker-desktop",
-        computerUse: {
-          contractVersion: 2 as const,
-          provider: { id: "fixture", label: "Fixture", generation: "generation-1" },
-          actions: ["screenshot" as const],
-          targets: ["screen" as const],
-          deliveryModes: ["foreground" as const],
-          observations: ["image" as const],
-          features: { recording: false, agentCursor: false, multiDisplay: false },
-        },
-      };
+      const computer = computerDescriptor("worker-desktop");
       const bind = vi.fn(() => ({ resolveNode: async () => computer, invoke: vi.fn() }));
       const prepareComputer = vi.fn(async () => ({
         descriptor: computer,
@@ -625,18 +615,7 @@ describe("worker turn launcher local placement", () => {
         }
       });
       const computer: PreparedWorkerComputer = {
-        descriptor: {
-          nodeId: nodeDeviceId ?? "unused-ssh-node",
-          computerUse: {
-            contractVersion: 2,
-            provider: { id: "fixture", label: "Fixture", generation: "generation-1" },
-            actions: ["screenshot"],
-            targets: ["screen"],
-            deliveryModes: ["foreground"],
-            observations: ["image"],
-            features: { recording: false, agentCursor: false, multiDisplay: false },
-          },
-        },
+        descriptor: computerDescriptor(nodeDeviceId ?? "unused-ssh-node"),
         bind: () => {
           throw new Error("unexpected computer binding");
         },

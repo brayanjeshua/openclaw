@@ -278,7 +278,6 @@ async function executeWorkerTurn(
     });
     throw new WorkerTurnExecutionError(WORKER_PROVIDER_REPLAY_LOCAL_RETRY_MESSAGE);
   }
-  const plan = launchPlan.plan;
   turn.userTurnTranscriptRecorder?.markSentToProvider?.();
   turn.onExecutionPhase?.({ phase: "attempt_dispatch", backend: "cloud-worker" });
   const handoffAbort = new AbortController();
@@ -305,8 +304,8 @@ async function executeWorkerTurn(
   if (!tunnel.launchTurn) {
     throw new Error("Worker tunnel does not support worker turns");
   }
-  const processPromise = tunnel.launchTurn({
-    plan,
+  const processResult = await tunnel.launchTurn({
+    plan: launchPlan.plan,
     turnClaim: params.turnClaim,
     timeoutMs: turn.timeoutMs,
     credentialExpiresAtMs: credential.expiresAtMs,
@@ -315,7 +314,6 @@ async function executeWorkerTurn(
       : handoffAbort.signal,
     onDispatchReady,
   });
-  const processResult = await processPromise;
   // Node launches return only after the exact launch journal receipt is terminal,
   // including any admission re-arms. Transport failures never reach this fact.
   if (environment.nodeDeviceId && environment.sshEndpoint === null) {
