@@ -1372,6 +1372,31 @@ describe("compaction-safeguard recent-turn preservation", () => {
     expect(quality.ok).toBe(true);
   });
 
+  it("does not invent a retained ask when the preparation contains no latest user ask", () => {
+    const summary = [
+      "## Decisions",
+      "Keep the existing recovery plan.",
+      "## Open TODOs",
+      "None.",
+      "## Constraints/Rules",
+      "Preserve the transcript.",
+      "## Pending user asks",
+      "None.",
+      "## Exact identifiers",
+      "None captured.",
+    ].join("\n");
+
+    expect(
+      auditSummaryQuality({
+        summary,
+        sourceSummaries: [summary],
+        identifiers: [],
+        latestAsk: null,
+        latestAskInRetainedTurn: true,
+      }),
+    ).toEqual({ ok: true, reasons: [] });
+  });
+
   it("dedupes pure-hex identifiers across case variants", () => {
     const identifiers = extractOpaqueIdentifiers(
       "Track id a1b2c3d4e5f6 plus A1B2C3D4E5F6 and again a1b2c3d4e5f6",

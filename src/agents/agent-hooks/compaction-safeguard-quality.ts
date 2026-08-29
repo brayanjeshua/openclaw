@@ -456,6 +456,7 @@ export function auditSummaryQuality(params: {
   }
   if (
     params.latestAskInRetainedTurn &&
+    resolveAskOverlapRequirement(params.latestAsk) &&
     params.sourceSummaries?.some((source) =>
       hasAskOverlap(
         parseRequiredSummarySectionContents(source)?.[PENDING_ASK_SECTION_INDEX] ?? "",
