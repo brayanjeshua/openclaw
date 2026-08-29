@@ -442,7 +442,9 @@ export function operationLeaseId(operationId: string): string {
     throw new Error("Crabbox provision requires an operation id");
   }
   if (LEGACY_PROVISION_OPERATION_ID_PATTERN.test(operationId)) {
-    throw new WorkerProviderError(
+    // Historical random allocation can exist without a recorded handle; refusing replay
+    // must not terminalize unresolved cleanup responsibility.
+    throw new Error(
       "Legacy Crabbox provision state cannot be replayed safely; clean up any prior lease and dispatch again",
     );
   }

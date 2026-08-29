@@ -13,7 +13,7 @@ Enrollment is environment-owned and replay-safe. The Gateway persists one setup 
 
 When the work is done (or the box dies), the machine is discarded. The durable state — transcript, last-reconciled workspace files, and placement records — lives with the Gateway.
 
-A missing setup environment value, a current Crabbox CLI/backend refusal, or changed provider metadata does not prove that an earlier attempt allocated nothing. These failures remain retryable with the original operation identity. Cleanup resolves that operation's handle and retries teardown until the provider confirms release or absence; it never reruns provisioning, setup, or enrollment to discover the lease. Malformed immutable profiles and unsupported legacy operation identities still fail permanently; policy and setup rejections become permanent only after confirmed cleanup.
+A missing setup environment value, a current Crabbox CLI/backend refusal, or changed provider metadata does not prove that an earlier attempt allocated nothing. These failures remain retryable with the original operation identity. Cleanup resolves that operation's handle and retries teardown until the provider confirms release or absence; it never reruns provisioning, setup, or enrollment to discover the lease. Malformed immutable profiles still fail permanently; policy and setup rejections become permanent only after confirmed cleanup.
 
 <Note>
 Cloud workers are opt-in. Until you configure a profile, clients hide the Cloud destination and profile dispatch is unavailable. `sessions.dispatch` may still be advertised for eligible paired-device targets. The `cloudWorkers` config schema and the read-only `environments.list` and `environments.status` methods remain available for configuration and environment discovery.
@@ -134,7 +134,9 @@ An explicit `profileId` or `deviceId` in `sessions.dispatch` always wins. A targ
 
 The enrolled node stores its identity, durable device token, endpoint, worker bundles, and workspaces under an isolated per-lease state directory on the disposable box. Provision replay first adopts the fixed Crabbox lease, then either resumes that node state or reuses the still-pending setup credential. It never mints a second environment identity for the same operation.
 
-OpenClaw derives one canonical `cbx_...` lease ID from the durable provision operation and passes it to `crabbox warmup --lease-id`; the deterministic slug is display metadata only. If warmup commits but its response is lost, Gateway reconciliation repeats the same fixed-ID operation and Crabbox returns or adopts only the exactly attested lease. Intent drift, terminal ID reuse, and ambiguous unverified resources fail closed without allocating a replacement. A legacy dispatch interrupted before OpenClaw recorded a lease ID cannot be identified safely and fails visibly instead of falling back to slug adoption.
+OpenClaw derives one canonical `cbx_...` lease ID from the durable provision operation and passes it to `crabbox warmup --lease-id`; the deterministic slug is display metadata only. If warmup commits but its response is lost, Gateway reconciliation repeats the same fixed-ID operation and Crabbox returns or adopts only the exactly attested lease. Intent drift, terminal ID reuse, and ambiguous unverified resources fail closed without allocating a replacement.
+
+An interrupted legacy dispatch may have allocated a random lease without recording its ID. OpenClaw cannot identify that allocation safely from the old operation alone. It refuses replay and slug adoption, retaining the unresolved allocation and cleanup record across restarts instead of treating the resource as gone. Identify and clean up any prior lease before starting a new dispatch; do not guess by slug. Automatic identification or settlement of the old record is not supported. Legacy records already marked failed are not reopened automatically.
 
 ### The setup command
 

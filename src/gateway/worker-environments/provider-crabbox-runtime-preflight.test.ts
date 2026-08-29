@@ -91,6 +91,82 @@ describe("Crabbox runtime preflight cleanup", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["restart reconciliation", "direct destroy"])(
+    "retains unresolved legacy allocation responsibility after %s and cleanup restart",
+    async (entrance) => {
+      const intent = support.testState.store.createIntent({
+        environmentId: "worker-legacy-provision",
+        providerId: "crabbox",
+        profileId: "development",
+        profileSnapshot: { settings: PROFILE },
+        provisionOperationId: `provision:${"0".repeat(64)}`,
+      });
+      const original = support.testState.store.transition({
+        environmentId: intent.environmentId,
+        from: intent.state,
+        to: "provisioning",
+      });
+      const runCommand = vi
+        .spyOn(processRuntime, "runCommandWithTimeout")
+        .mockImplementation(async () => {
+          throw new Error("legacy allocation must not invoke Crabbox");
+        });
+      const prepareNodeEnrollment = vi.fn();
+      await reopenStore();
+      const provider = await registerProvider();
+      const provision = vi.spyOn(provider, "provision");
+      const resolveAllocation = vi.spyOn(provider, "resolveAllocation");
+      let service = support.createService(provider, { prepareNodeEnrollment });
+      if (entrance === "restart reconciliation") {
+        await service.reconcileOnce();
+        expect(provision).toHaveBeenCalledOnce();
+        expect.soft(support.testState.store.get(original.environmentId)).toMatchObject({
+          ...original,
+          lastError: expect.stringContaining("cannot be replayed safely"),
+        });
+      }
+      await expect(service.destroy(original.environmentId)).rejects.toMatchObject({
+        code: "provider_failure",
+      });
+      const pending = expectDefined(
+        service.get(original.environmentId),
+        "unresolved legacy cleanup",
+      );
+      expect(pending).toMatchObject({
+        ...original,
+        destroyRequestedAtMs: support.testState.nowMs,
+        teardownTerminalState: "destroyed",
+        lastError: expect.stringContaining("cannot be replayed safely"),
+      });
+      expect(resolveAllocation).toHaveBeenCalledExactlyOnceWith(
+        PROFILE,
+        original.provisionOperationId,
+      );
+      expect(provision).toHaveBeenCalledTimes(entrance === "restart reconciliation" ? 1 : 0);
+
+      await reopenStore();
+      const restartedProvider = await registerProvider();
+      const restartedProvision = vi.spyOn(restartedProvider, "provision");
+      const restartedResolution = vi.spyOn(restartedProvider, "resolveAllocation");
+      service = support.createService(restartedProvider, { prepareNodeEnrollment });
+      await service.reconcileOnce();
+      await expect(service.destroy(original.environmentId)).rejects.toMatchObject({
+        code: "provider_failure",
+      });
+      expect(service.get(original.environmentId)).toEqual(pending);
+      expect(restartedResolution.mock.calls).toEqual([
+        [PROFILE, original.provisionOperationId],
+        [PROFILE, original.provisionOperationId],
+      ]);
+      expect(restartedProvision).not.toHaveBeenCalled();
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(prepareNodeEnrollment).not.toHaveBeenCalled();
+      expect(support.testState.prepareInstallation).not.toHaveBeenCalled();
+      expect(support.testState.bootstrapWorker).not.toHaveBeenCalled();
+      expect(support.testState.store.getCredential(original.environmentId)).toBeUndefined();
+    },
+  );
+
   // Synthetic CLI diagnostics exercise the real error producer, not captured native output.
   it.each([
     { kind: "setup-env", name: "missing setup environment" },

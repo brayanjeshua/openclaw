@@ -428,40 +428,6 @@ describe("worker environment service provision replay", () => {
     });
   });
 
-  it("records a permanent legacy provision replay failure without allocating", async () => {
-    const legacyOperationId = `provision:${"0".repeat(64)}`;
-    const intent = support.testState.store.createIntent({
-      environmentId: "worker-legacy-provision",
-      providerId: "fake",
-      profileId: "development",
-      profileSnapshot: { settings: { region: "test" } },
-      provisionOperationId: legacyOperationId,
-    });
-    support.testState.store.transition({
-      environmentId: intent.environmentId,
-      from: intent.state,
-      to: "provisioning",
-    });
-    const allocate = vi.fn(async () => ({ leaseId: "must-not-exist", ssh: support.SSH_ENDPOINT }));
-    const provider = support.createProvider({
-      provision: async (_profile, operationId) => {
-        if (operationId === legacyOperationId) {
-          throw new WorkerProviderError("Legacy Crabbox provision state cannot be replayed safely");
-        }
-        return await allocate();
-      },
-    });
-
-    await support.createService(provider).reconcileOnce();
-
-    expect(allocate).not.toHaveBeenCalled();
-    expect(support.testState.store.get(intent.environmentId)).toMatchObject({
-      state: "failed",
-      leaseId: null,
-      lastError: "Legacy Crabbox provision state cannot be replayed safely",
-    });
-  });
-
   it("does not resolve a provider provision timeout when the service override is set", async () => {
     const resolveProvisionTimeoutMs = vi.fn(() => {
       throw new Error("provider timeout hook must not run");

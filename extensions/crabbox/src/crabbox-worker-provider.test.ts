@@ -2866,8 +2866,12 @@ describe("Crabbox worker provider", () => {
       return commandResult();
     });
 
-    await expect(provider.provision(PROFILE, `provision:${"0".repeat(64)}`)).rejects.toMatchObject({
-      code: "invalid_profile",
+    const error = await provider
+      .provision(PROFILE, `provision:${"0".repeat(64)}`)
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(WorkerProviderError);
+    expect(error).toMatchObject({
       message: expect.stringContaining("cannot be replayed safely"),
     });
     expect(invoked).toBe(false);
