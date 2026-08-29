@@ -6,6 +6,7 @@
  * off the wrong machine.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferredCore } from "../../shared/deferred.js";
 import type { ComputerToolTransport } from "./computer-tool.js";
 
 const listNodesMock = vi.fn();
@@ -157,8 +158,8 @@ describe("createComputerTool node resolution", () => {
   });
 
   it("fences retained and queued calls while awaiting an in-flight capture before cleanup", async () => {
-    const capture = Promise.withResolvers<unknown>();
-    const captureStarted = Promise.withResolvers<void>();
+    const capture = createDeferredCore<unknown>();
+    const captureStarted = createDeferredCore();
     const invoke = vi.fn<ComputerToolTransport["invoke"]>(async ({ command }) => {
       if (command === "screen.snapshot") {
         captureStarted.resolve();

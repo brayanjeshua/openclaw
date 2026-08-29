@@ -29,7 +29,7 @@ function createPrivateTransport() {
   });
   return {
     commands: [DEMO_COMMAND],
-    isCurrent: () => true,
+    isCurrent: (): boolean => true,
     invoke,
   } satisfies PluginNodeInvokePrivateTransport;
 }

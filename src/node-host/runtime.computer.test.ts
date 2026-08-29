@@ -77,7 +77,12 @@ async function startComputer(ephemeral = true, prepare?: () => Promise<void>) {
     env: { PATH: "/usr/bin" },
     ephemeral,
   });
-  const request = vi.fn<NodeHostClient["request"]>().mockResolvedValue({});
+  const requests: Array<Parameters<NodeHostClient["request"]>> = [];
+  function request<T>(...args: Parameters<NodeHostClient["request"]>): Promise<T>;
+  async function request(...args: Parameters<NodeHostClient["request"]>): Promise<unknown> {
+    requests.push(args);
+    return {};
+  }
   const onManifestChanged = vi.fn();
   const runtime = prepared.start({ client: { request }, onManifestChanged });
   let invokeId = 0;
@@ -90,7 +95,7 @@ async function startComputer(ephemeral = true, prepare?: () => Promise<void>) {
       command,
       paramsJSON: JSON.stringify(input),
     });
-    const result = request.mock.calls.find(
+    const result = requests.find(
       (call) => call[0] === "node.invoke.result" && (call[1] as { id?: string }).id === id,
     )?.[1] as { ok: boolean; payloadJSON?: string; error?: { code: string; message: string } };
     return { ...result, payload: result?.payloadJSON ? JSON.parse(result.payloadJSON) : undefined };

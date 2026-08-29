@@ -419,10 +419,7 @@ export async function applyPluginNodeInvokePolicy(params: {
       return result;
     };
     sessionAuthority?.assertCurrent();
-    if (
-      callerIdentity &&
-      params.context.validateAgentRuntimeApprovalAuthority?.(callerIdentity) !== true
-    ) {
+    if (!isCallerRuntimeAuthorityActive()) {
       return deny("node_runtime_authority_closed", {
         ok: false,
         code: "APPROVAL_AUTHORITY_CLOSED",
@@ -514,10 +511,7 @@ export async function applyPluginNodeInvokePolicy(params: {
         message: "node plugin policy changed before dispatch",
       });
     }
-    if (
-      callerIdentity &&
-      params.context.validateAgentRuntimeApprovalAuthority?.(callerIdentity) !== true
-    ) {
+    if (!isCallerRuntimeAuthorityActive()) {
       return deny("node_runtime_authority_closed", {
         ok: false,
         code: "APPROVAL_AUTHORITY_CLOSED",
@@ -574,8 +568,7 @@ export async function applyPluginNodeInvokePolicy(params: {
           isPluginCurrent() &&
           params.privateTransport?.isCurrent() !== false &&
           (params.nodeInvokeStream?.isRuntimeCurrent() ?? true) &&
-          (!callerIdentity ||
-            params.context.validateAgentRuntimeApprovalAuthority?.(callerIdentity) === true) &&
+          isCallerRuntimeAuthorityActive() &&
           params.isApprovalAuthorityActive?.() !== false &&
           resolveCommandAuthorization().ok
         );
