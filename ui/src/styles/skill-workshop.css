@@ -1259,10 +1259,23 @@
 @media (max-width: 768px) {
   .sw-triage {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(96px, 22vh) minmax(80vh, auto);
   }
 
   .sw-queue-resizer {
     display: none;
+  }
+
+  .content--skill-workshop {
+    overflow-y: auto;
+  }
+
+  .sw-hub-panel,
+  .sw-hub-panel::part(base),
+  .skill-workshop,
+  .sw-view,
+  .sw-view__pane {
+    min-height: auto;
   }
 }
 

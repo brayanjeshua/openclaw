@@ -309,9 +309,12 @@ suite.define(() => {
         expectStableGeometry(await hubGeometry(page), installed);
         const boardLayout = await page.locator(".content--skill-workshop").evaluate((element) => {
           const style = getComputedStyle(element);
-          return { display: style.display, overflow: style.overflow };
+          return { display: style.display, overflowY: style.overflowY };
         });
-        expect(boardLayout).toEqual({ display: "flex", overflow: "hidden" });
+        expect(boardLayout).toEqual({
+          display: "flex",
+          overflowY: label === "narrow" ? "auto" : "hidden",
+        });
         await captureScreenshot(page, `${label}-05-workshop-board.png`);
 
         await page.locator("#skill-workshop-mode-tab-today").click();
