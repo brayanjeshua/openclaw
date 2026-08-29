@@ -74,7 +74,7 @@ describe("Codex app-server websocket transport", () => {
     if (!address || typeof address === "string") {
       throw new Error("expected websocket test server port");
     }
-    const client = CodexAppServerClient.start({
+    const client = await CodexAppServerClient.start({
       transport: "websocket",
       url: `ws://127.0.0.1:${address.port}`,
       authToken: "secret",
@@ -320,7 +320,7 @@ describe("Codex app-server websocket transport", () => {
       httpServer.listen(socketPath, resolve);
     });
 
-    const client = CodexAppServerClient.start({
+    const client = await CodexAppServerClient.start({
       transport: "unix",
       homeScope: "user",
       url: `unix://${socketPath}`,
