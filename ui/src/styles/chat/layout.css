@@ -785,7 +785,7 @@ openclaw-chat-page {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, transparent 10%, var(--accent) 50%, transparent 90%);
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
   opacity: 0;
   transform: translateX(-100%);
 }
@@ -802,7 +802,6 @@ openclaw-chat-page {
 .chat-history-boundary__action {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
   padding: 2px 10px;
   border: 0;
   background: none;
@@ -817,25 +816,14 @@ openclaw-chat-page {
   color: var(--text);
 }
 
-.chat-history-boundary--loading .chat-history-boundary__action {
-  animation: chat-history-boundary-pulse 1.2s ease-in-out infinite;
-}
-
 @keyframes chat-history-comet {
   to {
     transform: translateX(100%);
   }
 }
 
-@keyframes chat-history-boundary-pulse {
-  50% {
-    opacity: 0.45;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .chat-history-boundary--loading .chat-history-boundary__line::after,
-  .chat-history-boundary--loading .chat-history-boundary__action {
+  .chat-history-boundary--loading .chat-history-boundary__line::after {
     animation: none;
   }
 }
