@@ -1258,33 +1258,17 @@
     grid-template-columns: minmax(0, 1fr);
     /* Default (unset) rows split the queue and detail panes 50/50, so the
        description body — which has its own internal scroll — was squeezed
-       into a sliver a few lines tall. Cap the queue and let the detail
-       pane claim the rest of the height so it's actually readable. */
-    grid-template-rows: minmax(140px, 34vh) minmax(0, 1fr);
-    /* .content--skill-workshop is a fixed-height, overflow:hidden flex
-       chain built for the desktop two-pane layout, where each pane
-       scrolls internally. Stacked on a phone, the hero card + tabs above
-       the triage view already eat most of that fixed height, so the
-       detail pane — and its description — was getting clipped outright,
-       not just squeezed. Give it a tall minimum so there's always real
-       room to read. */
-    min-height: 80vh;
+       into a sliver a few lines tall. Cap the queue at a small fixed share
+       and let the detail pane claim the rest of the board's height —
+       .content--skill-workshop stays a fixed-height, overflow:hidden flex
+       chain (desktop two-pane layout, each pane scrolls internally), so
+       this only redistributes space within it rather than growing past it.
+       .sw-detail__body already scrolls internally (overflow: auto). */
+    grid-template-rows: minmax(96px, 22vh) minmax(0, 1fr);
   }
 
   .sw-queue-resizer {
     display: none;
-  }
-
-  .content--skill-workshop {
-    overflow-y: auto;
-  }
-
-  .sw-hub-panel,
-  .sw-hub-panel::part(base),
-  .skill-workshop,
-  .sw-view,
-  .sw-view__pane {
-    min-height: auto;
   }
 }
 
