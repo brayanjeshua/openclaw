@@ -29,7 +29,7 @@ import {
 } from "./chat-history.ts";
 import { ChatPaneReplyNavigation } from "./chat-pane-reply-navigation.ts";
 import {
-  CHAT_HISTORY_INTENT_EDGE_PX,
+  CHAT_HISTORY_PREFETCH_EDGE_PX,
   CHAT_HISTORY_INTENT_IDLE_MS,
   CHAT_HISTORY_TOUCH_INTENT_PX,
   CHAT_HISTORY_UPWARD_KEYS,
@@ -142,9 +142,10 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
           void this.loadOlderMessages();
         }
       },
-      // Fire well before the wall: a page fetch takes long enough that a 300px
-      // margin guarantees the user hits the top before the prepend lands.
-      { root, rootMargin: "1200px 0px 0px", threshold: 0 },
+      // Fire well before the wall: a page fetch takes long enough that a short
+      // margin guarantees the user hits the top before the prepend lands. The
+      // arming gates above share this constant, so the trigger distance is real.
+      { root, rootMargin: `${CHAT_HISTORY_PREFETCH_EDGE_PX}px 0px 0px`, threshold: 0 },
     );
     this.historyObserverRoot = root;
     this.historyObserverSentinel = sentinel;
@@ -181,7 +182,7 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
       root !== null &&
       previousScrollTop !== null &&
       root.scrollTop < previousScrollTop &&
-      root.scrollTop <= CHAT_HISTORY_INTENT_EDGE_PX;
+      root.scrollTop <= CHAT_HISTORY_PREFETCH_EDGE_PX;
     const newHistoryIntent = hasUpwardIntent && this.consumeHistoryIntent();
     // A failed request or exhausted bootstrap stays disarmed until renewed
     // upward intent, preventing request loops without stranding older history.
@@ -239,7 +240,7 @@ export abstract class ChatPaneHistory extends ChatPaneReplyNavigation {
     if (
       !root ||
       !upward ||
-      root.scrollTop > CHAT_HISTORY_INTENT_EDGE_PX ||
+      root.scrollTop > CHAT_HISTORY_PREFETCH_EDGE_PX ||
       this.loadingOlder ||
       !this.hasOlderMessages() ||
       !this.consumeHistoryIntent()
