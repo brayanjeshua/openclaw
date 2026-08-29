@@ -29,8 +29,8 @@ function extractFunctionBody(source: string, name: string): string {
   return match[1];
 }
 
-function findPowerShell(): string | undefined {
-  for (const candidate of ["pwsh", "powershell"]) {
+function findPowerShell(candidates = ["pwsh", "powershell"]): string | undefined {
+  for (const candidate of candidates) {
     const result = spawnSync(
       candidate,
       ["-NoLogo", "-NoProfile", "-Command", "$PSVersionTable.PSVersion"],
@@ -93,6 +93,10 @@ describe("install.ps1 failure handling", () => {
   const harness = createScriptTestHarness();
   const source = readFileSync(SCRIPT_PATH, "utf8");
   const powershell = findPowerShell();
+  const bootstrapShells =
+    process.platform === "win32"
+      ? ["powershell", "pwsh"].filter((candidate) => findPowerShell([candidate]))
+      : [];
   const runIfPowerShell = powershell ? it : it.skip;
   const runConcurrentIfPowerShell = powershell ? it.concurrent : it.skip;
   const runPowerShell = (args: string[]) => {
@@ -833,6 +837,216 @@ describe("install.ps1 failure handling", () => {
         ].join("\n"),
       },
     ];
+    if (process.platform === "win32") {
+      cases.push({
+        name: "pnpm-source-bootstrap-lifecycle",
+        source: [
+          scriptWithoutEntryPoint,
+          `$nodeExe = ${toPowerShellSingleQuotedLiteral(process.execPath)}`,
+          String.raw`
+$root = Join-Path $script:InstallerTempDirectory ("openclaw pnpm boundary " + [guid]::NewGuid().ToString("N"))
+$contextNames = @('COREPACK_ENABLE_DOWNLOAD_PROMPT', 'NPM_CONFIG_WORKSPACE_DIR', 'PNPM_CONFIG_LOCKFILE_DIR', 'PNPM_CONFIG_CHILD_CONCURRENCY', 'PNPM_CONFIG_NETWORK_CONCURRENCY', 'PNPM_CONFIG_WORKSPACE_CONCURRENCY', 'PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN', 'PNPM_CONFIG_SIDE_EFFECTS_CACHE', 'NODE_OPTIONS')
+$saved = @{}
+foreach ($name in (@('PATH', 'PATHEXT', 'USERPROFILE', 'OPENCLAW_TEST_BOOTSTRAP_ROOT', 'PNPM_CONFIG_PREFER_OFFLINE') + $contextNames)) {
+    $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+$previousTemp = $script:InstallerTempDirectory
+$previousLocation = (Get-Location).Path
+function Ensure-Git { return $true }
+function Assert-GitCheckoutHasCommit { param([string]$RepoDir) }
+function Remove-LegacySubmodule { param([string]$RepoDir) }
+function git { throw 'unexpected Git mutation' }
+function New-TransactionalGitCheckout { throw 'unexpected clone' }
+function Main { throw 'unexpected installer entrypoint' }
+function Run-Doctor { throw 'unexpected doctor' }
+function Refresh-GatewayServiceIfLoaded { throw 'unexpected gateway refresh' }
+function Invoke-OpenClawCommand { throw 'unexpected live CLI' }
+function Publish-TextFileAtomically {
+    param([string]$Path, [string]$Contents)
+    if ($Path -ne (Join-Path $env:USERPROFILE '.local\bin\openclaw.cmd')) { throw 'publication escaped fixture' }
+    $script:Published += 1
+}
+function Add-ToUserPath { param([string]$Path); $script:PathPublished += 1; return $false }
+$commandSource = @'
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const root = process.env.OPENCLAW_TEST_BOOTSTRAP_ROOT;
+const spec = JSON.parse(fs.readFileSync(path.join(root, 'case.json'), 'utf8'));
+const target = path.join(root, 'target');
+const log = path.join(root, 'calls.jsonl');
+const [kind, launcher, ...args] = process.argv.slice(2);
+const samePath = (a, b) => assert.equal(path.resolve(a).toLowerCase(), path.resolve(b).toLowerCase());
+const calls = () => fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
+if (kind === 'verify') {
+    const events = calls();
+    assert.equal(events.some((e) => e.kind === 'ambient'), false, 'ambient pnpm ran');
+    const stages = events.filter((e) => e.kind === 'selected' && e.args[0] !== '--version').map((e) => e.args[0]);
+    const expected = spec.failure === 'bootstrap' || spec.failure === 'version' ? []
+        : spec.failure === 'install' ? ['config', 'install', 'install']
+        : spec.failure === 'build' ? ['config', 'install', 'ui:build', 'nested-ui', 'build']
+        : ['config', 'install', 'ui:build', 'nested-ui', 'build', 'nested-build'];
+    assert.deepEqual(stages, expected);
+    const npmInstalls = events.filter((e) => e.kind === 'npm' && e.args[0] === 'install');
+    assert.equal(npmInstalls.length, spec.mode === 'corepack' ? 0 : 1);
+    assert.equal(events.filter((e) => e.kind === 'corepack').length, spec.mode === 'missing' ? 0 : 1);
+    const selected = events.filter((e) => e.kind === 'selected');
+    assert.ok(selected.length || spec.failure === 'bootstrap');
+    for (const event of selected) {
+        samePath(event.cwd, target);
+        if (event.args[0] !== '--version') samePath(event.path.split(';')[0], path.dirname(event.launcher));
+    }
+    process.exit(0);
+}
+const roots = Object.fromEntries(['NPM_CONFIG_WORKSPACE_DIR', 'npm_config_workspace_dir', 'PNPM_CONFIG_LOCKFILE_DIR', 'pnpm_config_lockfile_dir'].map((key) => [key, process.env[key] ?? null]));
+fs.appendFileSync(log, JSON.stringify({ kind, launcher, args, cwd: process.cwd(), path: process.env.PATH, roots, prompt: process.env.COREPACK_ENABLE_DOWNLOAD_PROMPT ?? null, nodeOptions: process.env.NODE_OPTIONS ?? null }) + '\n');
+if (kind === 'ambient') {
+    fs.writeFileSync(path.join(target, 'pnpm-lock.yaml'), 'corrupted');
+    console.log(spec.version);
+    process.exit(0);
+}
+assert.equal(process.env.COREPACK_ENABLE_DOWNLOAD_PROMPT, '0');
+for (const key of ['NPM_CONFIG_WORKSPACE_DIR', 'npm_config_workspace_dir', 'PNPM_CONFIG_LOCKFILE_DIR', 'pnpm_config_lockfile_dir']) {
+    samePath(process.env[key], target);
+}
+for (const [key, value] of Object.entries({ CHILD_CONCURRENCY: '1', NETWORK_CONCURRENCY: '4', WORKSPACE_CONCURRENCY: '1', VERIFY_DEPS_BEFORE_RUN: 'false', SIDE_EFFECTS_CACHE: 'false' })) {
+    assert.equal(process.env['PNPM_CONFIG_' + key], value, key);
+}
+const writeSelected = (dir) => {
+    assert.equal(path.dirname(dir) === path.join(root, 'tools') || path.dirname(path.dirname(dir)) === path.join(root, 'tools'), true);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pnpm.cmd'), '@echo off\r\n"' + process.execPath + '" "' + __filename + '" selected "%~f0" %*\r\nexit /b %errorlevel%\r\n');
+};
+if (kind === 'corepack') {
+    assert.deepEqual(args.slice(0, 2), ['enable', '--install-directory']);
+    assert.equal(args.length, 4);
+    assert.equal(args[3], 'pnpm');
+    samePath(path.dirname(args[2]), path.join(root, 'tools'));
+    if (spec.mode === 'failing') process.exit(42);
+    writeSelected(args[2]);
+} else if (kind === 'npm') {
+    if (args[0] === '--version') {
+        assert.deepEqual(args, ['--version']);
+        console.log('12.0.0');
+    } else {
+        assert.deepEqual(args.slice(0, 3), ['install', '-g', '--prefix']);
+        assert.deepEqual(args.slice(4), ['pnpm@' + spec.version, '--allow-scripts=pnpm@' + spec.version]);
+        assert.equal(path.basename(args[3]), 'npm');
+        samePath(path.dirname(path.dirname(args[3])), path.join(root, 'tools'));
+        if (spec.failure === 'bootstrap') process.exit(42);
+        writeSelected(args[3]);
+    }
+} else {
+    assert.equal(kind, 'selected');
+    samePath(process.cwd(), target);
+    if (args[0] === '--version') {
+        assert.deepEqual(args, ['--version']);
+        const wrongVersion = spec.failure === 'version' || (spec.mode === 'wrong-version' && path.basename(path.dirname(launcher)) !== 'npm');
+        console.log(wrongVersion ? '0.0.0' : spec.version);
+    } else if (args[0] === 'config') {
+        assert.deepEqual(args, ['config', 'get', 'prefer-offline']);
+        console.log('undefined');
+    } else if (args[0] === 'install') {
+        assert.deepEqual(args, ['install', '--prefer-offline', '--config.node-linker=hoisted', '--config.engine-strict=false', '--config.enable-pre-post-scripts=true', '--config.side-effects-cache=false', '--no-frozen-lockfile', '--config.child-concurrency=1', '--config.network-concurrency=4', '--config.workspace-concurrency=1']);
+        if (spec.failure === 'install') process.exit(42);
+    } else if (args[0] === 'ui:build' || args[0] === 'build') {
+        assert.equal(args.length, 1);
+        if (args[0] === 'build') {
+            assert.match(process.env.NODE_OPTIONS, /--max-old-space-size=8192/);
+            if (spec.failure === 'build') process.exit(42);
+            fs.mkdirSync(path.join(target, 'dist'), { recursive: true });
+            fs.writeFileSync(path.join(target, 'dist', 'entry.js'), 'process.exit(0);');
+        }
+        const child = spawnSync(process.env.ComSpec, ['/d', '/s', '/c', 'pnpm ' + (args[0] === 'build' ? 'nested-build' : 'nested-ui')], { stdio: 'inherit', windowsVerbatimArguments: true });
+        assert.equal(child.error, undefined);
+        process.exit(child.status ?? 1);
+    } else {
+        assert.ok(['nested-ui', 'nested-build'].includes(args[0]));
+        assert.equal(args.length, 1);
+    }
+}
+'@
+$scenarios = @(
+    @{ Mode = 'corepack'; Failure = ''; Present = $true; Version = '12.0.0' },
+    @{ Mode = 'corepack'; Failure = ''; Present = $false; Version = '11.15.1' },
+    @{ Mode = 'missing'; Failure = ''; Present = $false; Version = '12.0.0' },
+    @{ Mode = 'failing'; Failure = ''; Present = $true; Version = '12.0.0' },
+    @{ Mode = 'wrong-version'; Failure = ''; Present = $false; Version = '12.0.0' },
+    @{ Mode = 'missing'; Failure = 'bootstrap'; Present = $true; Version = '12.0.0' },
+    @{ Mode = 'missing'; Failure = 'version'; Present = $false; Version = '12.0.0' },
+    @{ Mode = 'corepack'; Failure = 'install'; Present = $false; Version = '12.0.0' },
+    @{ Mode = 'missing'; Failure = 'build'; Present = $true; Version = '12.0.0' }
+)
+try {
+    foreach ($scenario in $scenarios) {
+        $caseRoot = Join-Path $root ([guid]::NewGuid().ToString('N'))
+        $bin = Join-Path $caseRoot 'bin'
+        $target = Join-Path $caseRoot 'target'
+        $foreign = Join-Path $caseRoot 'foreign'
+        $script:InstallerTempDirectory = Join-Path $caseRoot 'tools'
+        foreach ($dir in @($bin, $target, $foreign, $script:InstallerTempDirectory)) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        }
+        $env:OPENCLAW_TEST_BOOTSTRAP_ROOT = $caseRoot
+        $env:USERPROFILE = $caseRoot
+        $env:PATH = $bin
+        $env:PATHEXT = '.COM;.EXE;.BAT;.CMD'
+        [Environment]::SetEnvironmentVariable('PNPM_CONFIG_PREFER_OFFLINE', $null, 'Process')
+        [IO.File]::WriteAllText((Join-Path $caseRoot 'command.cjs'), $commandSource)
+        $caseSpec = @{ mode = $scenario.Mode; failure = $scenario.Failure; version = $scenario.Version }
+        [IO.File]::WriteAllText((Join-Path $caseRoot 'case.json'), ($caseSpec | ConvertTo-Json -Compress))
+        [IO.File]::WriteAllText((Join-Path $target 'package.json'), ('{"packageManager":"pnpm@' + $scenario.Version + '"}'))
+        foreach ($dir in @($target, $foreign)) { [IO.File]::WriteAllText((Join-Path $dir 'pnpm-lock.yaml'), 'unchanged') }
+        $manifest = [IO.File]::ReadAllText((Join-Path $target 'package.json'))
+        foreach ($kind in @('npm', 'ambient', 'corepack')) {
+            if ($kind -eq 'corepack' -and $scenario.Mode -eq 'missing') { continue }
+            $name = if ($kind -eq 'ambient') { 'pnpm' } else { $kind }
+            $cmd = '@echo off' + [Environment]::NewLine + '"' + $nodeExe + '" "' + (Join-Path $caseRoot 'command.cjs') + '" ' + $kind + ' "%~f0" %*' + [Environment]::NewLine + 'exit /b %errorlevel%'
+            [IO.File]::WriteAllText((Join-Path $bin ($name + '.cmd')), $cmd)
+        }
+        [IO.File]::WriteAllText((Join-Path $bin 'node.cmd'), ('@"' + $nodeExe + '" %*' + [Environment]::NewLine + '@exit /b %errorlevel%'))
+        foreach ($name in $contextNames) {
+            $value = if (-not $scenario.Present) { $null } elseif ($name -eq 'COREPACK_ENABLE_DOWNLOAD_PROMPT') { '1' } elseif ($name -eq 'NODE_OPTIONS') { '--no-warnings' } elseif ($name -match '_DIR$') { $foreign } else { '7' }
+            [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+        }
+        $caller = @{}
+        foreach ($name in (@('PATH') + $contextNames)) { $caller[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        Set-Location -LiteralPath $foreign
+        $script:Published = 0
+        $script:PathPublished = 0
+        $caught = $null
+        $ownerOutput = @()
+        try { $ownerOutput = @(Install-OpenClawFromGit -RepoDir $target -SkipUpdate) } catch { $caught = $_ }
+        $success = Test-BooleanSuccessResult -Results $ownerOutput
+        if ($scenario.Failure -in @('bootstrap', 'version')) {
+            if (-not $caught -or $caught.Exception.Message -notmatch 'Could not (install|provision)') { throw "missing bootstrap failure: $caught" }
+        } elseif ($caught) { throw $caught }
+        $expectedSuccess = $scenario.Failure -eq ''
+        if ($success -ne $expectedSuccess) { throw "unexpected owner result: $($scenario | ConvertTo-Json -Compress)" }
+        if ($script:Published -ne [int]$expectedSuccess -or $script:PathPublished -ne [int]$expectedSuccess) { throw 'publication boundary was violated' }
+        foreach ($name in $caller.Keys) {
+            if ([Environment]::GetEnvironmentVariable($name, 'Process') -cne $caller[$name]) { throw "caller environment leaked: $name" }
+        }
+        if ((Get-Location).Path -ne $foreign) { throw 'caller location leaked' }
+        if (@(Get-ChildItem -LiteralPath $script:InstallerTempDirectory -Force).Count -ne 0) { throw 'temporary pnpm prefix leaked' }
+        foreach ($dir in @($target, $foreign)) {
+            if ([IO.File]::ReadAllText((Join-Path $dir 'pnpm-lock.yaml')) -ne 'unchanged') { throw 'lockfile changed' }
+        }
+        if ([IO.File]::ReadAllText((Join-Path $target 'package.json')) -ne $manifest) { throw 'manifest changed' }
+        & $nodeExe (Join-Path $caseRoot 'command.cjs') verify
+        if ($LASTEXITCODE -ne 0) { throw "child boundary verification failed: $($scenario | ConvertTo-Json -Compress)" }
+    }
+} finally {
+    Set-Location -LiteralPath $previousLocation
+    foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+    $script:InstallerTempDirectory = $previousTemp
+    if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+}
+`,
+        ].join("\n"),
+      });
+    }
     const tempDir = harness.createTempDir("openclaw-install-ps1-batch-");
     const fixtures = cases.map((testCase, index) => {
       const scriptPath = join(tempDir, `case-${index}.ps1`);
@@ -866,6 +1080,26 @@ describe("install.ps1 failure handling", () => {
     const parsed = JSON.parse(result.stdout) as Array<{ error: string; name: string; ok: boolean }>;
     for (const entry of parsed) {
       batchedPowerShellResults.set(entry.name, { error: entry.error, ok: entry.ok });
+    }
+    // Repeat only the native bootstrap case under the other installed engine;
+    // the hosted install command still uses Windows PowerShell 5.1.
+    for (const engine of bootstrapShells) {
+      const name = "pnpm-source-bootstrap-lifecycle";
+      if (engine === powershell) {
+        continue;
+      }
+      const fixture = fixtures.find((entry) => entry.name === name);
+      if (!fixture) {
+        throw new Error("Missing native bootstrap fixture");
+      }
+      const invocation = `$ErrorActionPreference = 'Stop'; & ([scriptblock]::Create((Get-Content -LiteralPath ${toPowerShellSingleQuotedLiteral(fixture.scriptPath)} -Raw)))`;
+      const result = spawnSync(engine, ["-NoLogo", "-NoProfile", "-Command", invocation], {
+        encoding: "utf8",
+      });
+      batchedPowerShellResults.set(`${name}:${engine}`, {
+        ok: result.status === 0,
+        error: result.status === 0 ? "" : result.stdout + result.stderr,
+      });
     }
   });
 
@@ -996,6 +1230,17 @@ describe("install.ps1 failure handling", () => {
   runIfPowerShell("preserves explicit pnpm prefer-offline settings for Git installs", () => {
     expectBatchedPowerShellCase("pnpm-prefer-offline-policy");
   });
+
+  (process.platform === "win32" ? it : it.skip)(
+    "scopes native pnpm children and restores the caller across source-install outcomes",
+    () => {
+      expect(bootstrapShells).toContain("powershell");
+      for (const engine of bootstrapShells) {
+        const name = "pnpm-source-bootstrap-lifecycle";
+        expectBatchedPowerShellCase(engine === powershell ? name : `${name}:${engine}`);
+      }
+    },
+  );
 
   runIfPowerShell("rejects npm success without a usable candidate package", () => {
     expectBatchedPowerShellCase("npm-candidate-validation");
