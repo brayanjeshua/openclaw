@@ -3,7 +3,7 @@ import type {
   WorkerTranscriptCommitResult,
   WorkerTranscriptMessage,
 } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
-import { WORKER_PROTOCOL_MAX_PAYLOAD_BYTES } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
+import { isWorkerTranscriptFrameWithinLimits } from "../../packages/gateway-protocol/src/worker-transcript-payload.js";
 import { isWorkerTranscriptMessageFrameSafe } from "./transcript-message.js";
 import { type WorkerConnection, WorkerConnectionInterruptedError } from "./worker-connection.js";
 import type { TranscriptResponseError } from "./worker-rpc-client-shared.js";
@@ -104,7 +104,7 @@ export class WorkerTranscriptCommitClient {
           messages: candidate,
         },
       };
-      if (Buffer.byteLength(JSON.stringify(frame), "utf8") > WORKER_PROTOCOL_MAX_PAYLOAD_BYTES) {
+      if (!isWorkerTranscriptFrameWithinLimits(frame)) {
         if (batch.length === 0) {
           throw new Error("worker transcript message exceeds the protocol payload limit");
         }

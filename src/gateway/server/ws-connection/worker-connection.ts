@@ -12,9 +12,14 @@ import {
   WORKER_PROTOCOL_METHODS,
   validateRequestFrame,
   validateWorkerConnectRequestFrame,
+  validateWorkerTranscriptCommitParams,
 } from "../../../../packages/gateway-protocol/src/index.js";
 import { WORKER_INFERENCE_METHODS } from "../../../../packages/gateway-protocol/src/schema/worker-inference.js";
 import { GATEWAY_STARTUP_RETRY_AFTER_MS } from "../../../../packages/gateway-protocol/src/startup-unavailable.js";
+import {
+  isWorkerTranscriptFrameWithinLimits,
+  WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE,
+} from "../../../../packages/gateway-protocol/src/worker-transcript-payload.js";
 import { rawDataByteLength } from "../../../infra/ws.js";
 import {
   getGatewaySuspendAdmissionPhase,
@@ -277,9 +282,19 @@ export function attachWorkerWsMessageHandler(params: WorkerWsMessageHandlerParam
       closeWorker(1008, "invalid-frame");
       return;
     }
+    const mediaTranscript =
+      parsed.method === "worker.transcript.commit" &&
+      client.worker?.protocolFeatures.includes(WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE) &&
+      validateWorkerTranscriptCommitParams(parsed.params) &&
+      isWorkerTranscriptFrameWithinLimits({
+        ...parsed,
+        method: "worker.transcript.commit",
+        params: parsed.params,
+      });
     if (
       frameBytes > WORKER_PROTOCOL_MAX_PAYLOAD_BYTES &&
-      parsed.method !== WORKER_INFERENCE_METHODS[0]
+      parsed.method !== WORKER_INFERENCE_METHODS[0] &&
+      !mediaTranscript
     ) {
       failFrame(1009, "invalid-frame");
       return;
@@ -292,6 +307,7 @@ export function attachWorkerWsMessageHandler(params: WorkerWsMessageHandlerParam
       parsed.method === WORKER_PROTOCOL_METHODS[4] ||
       parsed.method === WORKER_PROTOCOL_METHODS[5] ||
       parsed.method === WORKER_PROTOCOL_METHODS[6] ||
+      parsed.method === "worker.computer" ||
       parsed.method === WORKER_INFERENCE_METHODS[0] ||
       parsed.method === WORKER_INFERENCE_METHODS[1]
     ) {
@@ -331,7 +347,8 @@ export function attachWorkerWsMessageHandler(params: WorkerWsMessageHandlerParam
       parsed.method === WORKER_PROTOCOL_METHODS[3] ||
       parsed.method === WORKER_PROTOCOL_METHODS[4] ||
       parsed.method === WORKER_PROTOCOL_METHODS[5] ||
-      parsed.method === WORKER_PROTOCOL_METHODS[6];
+      parsed.method === WORKER_PROTOCOL_METHODS[6] ||
+      parsed.method === "worker.computer";
     if (isLongSessionOperation) {
       if (sessionOperations.has(parsed.id)) {
         failFrame(1008, "invalid-frame");
@@ -342,7 +359,7 @@ export function attachWorkerWsMessageHandler(params: WorkerWsMessageHandlerParam
         return;
       }
       sessionOperations.add(parsed.id);
-      // Provisioning and recipient turns can take minutes. Retain independent
+      // Provisioning, recipient turns, and desktop actions can take time. Retain independent
       // shutdown admission while releasing this connection's ordered frame
       // queue so heartbeats, cancellation, and terminal ACKs keep flowing. A
       // socket is only a response transport: disconnecting it must not cancel

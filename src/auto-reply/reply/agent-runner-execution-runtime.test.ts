@@ -18,6 +18,44 @@ import type { FallbackRunnerParams } from "./agent-runner-execution.test-support
 const state = setupAgentRunnerExecutionTestState();
 
 describe("executeAgentTurn: runtime selection", () => {
+  it.each([
+    { name: "vision", input: ["text", "image"] as const, expected: true },
+    { name: "text-only", input: ["text"] as const, expected: false },
+    { name: "unknown", input: undefined, expected: undefined },
+  ])(
+    "forwards the selected fallback model's $name capability into embedded execution",
+    async ({ input, expected }) => {
+      state.runWithModelFallbackMock.mockImplementationOnce(
+        async (params: FallbackRunnerParams) => ({
+          result: await params.run(
+            "openai",
+            "fallback-model",
+            initialFallbackAttemptOptions(params),
+          ),
+          provider: "openai",
+          model: "fallback-model",
+          attempts: [],
+        }),
+      );
+      state.runEmbeddedAgentMock.mockResolvedValueOnce({ payloads: [{ text: "done" }], meta: {} });
+      const followupRun = createFollowupRun();
+      followupRun.run.provider = "openai";
+      followupRun.run.model = "primary-model";
+      followupRun.run.thinkingCatalog = [
+        { provider: "openai", id: "primary-model", input: ["text", "image"] },
+        ...(input ? [{ provider: "openai", id: "fallback-model", input: [...input] }] : []),
+      ];
+      const executeAgentTurn = await getExecuteAgentTurnForTest();
+      const result = await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
+      expect(result.kind).toBe("success");
+      expectMockCallArgFields(state.runEmbeddedAgentMock, 0, "embedded run params", {
+        provider: "openai",
+        model: "fallback-model",
+        modelHasVision: expected,
+      });
+    },
+  );
+
   it.each(["group", "channel"] as const)(
     "forwards authoritative %s type through CLI fallback for opaque session keys",
     async (chatType) => {

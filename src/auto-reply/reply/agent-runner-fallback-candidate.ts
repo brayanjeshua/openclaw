@@ -1,3 +1,4 @@
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { markAutoFallbackPrimaryProbe } from "../../agents/agent-scope.js";
 import { resolveCliBackendConfig } from "../../agents/cli-backends.js";
@@ -232,6 +233,11 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           markAutoFallbackPrimaryProbe({ probe: activeProbe, sessionKey: turn.sessionKey });
         }
         turn.opts?.onModelSelected?.({ provider, model, thinkLevel: candidateThinkLevel });
+        const normalizedProvider = normalizeProviderId(provider);
+        const selectedModelEntry = turn.followupRun.run.thinkingCatalog?.find(
+          (entry) =>
+            normalizeProviderId(entry.provider) === normalizedProvider && entry.id === model,
+        );
         const common = {
           preparedRunAdmission: params.preparedRunAdmission,
           turn,
@@ -239,6 +245,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
           runtimeConfig: params.runtimeConfig,
           provider,
           model,
+          selectedModelEntry,
           candidateThinkLevel,
           candidateFastMode,
           runId: params.runId,

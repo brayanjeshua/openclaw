@@ -27,6 +27,11 @@ import {
   WorkerTranscriptCommitResponseFrameSchema,
 } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
 import {
+  type WorkerComputerParams,
+  type WorkerComputerResponseFrame,
+  WorkerComputerResponseFrameSchema,
+} from "../../packages/gateway-protocol/src/schema/worker-computer.js";
+import {
   type WorkerInferenceCancelParams,
   type WorkerInferenceCancelResponseFrame,
   WorkerInferenceCancelResponseFrameSchema,
@@ -39,6 +44,10 @@ import {
   validateWorkerInferenceEventFrame,
   validateWorkerInferenceTerminalFrame,
 } from "../../packages/gateway-protocol/src/schema/worker-inference.js";
+import {
+  isWorkerTranscriptFrameWithinLimits,
+  WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE,
+} from "../../packages/gateway-protocol/src/worker-transcript-payload.js";
 import { notifyListeners } from "../shared/listeners.js";
 import {
   createPendingRequestRegistry,
@@ -78,6 +87,10 @@ const WORKER_REQUEST_SPECS = {
     method: "worker.portal",
     responseSchema: WorkerPortalResponseFrameSchema,
   },
+  computer: {
+    method: "worker.computer",
+    responseSchema: WorkerComputerResponseFrameSchema,
+  },
   "inference-start": {
     method: "worker.inference.start",
     responseSchema: WorkerInferenceStartResponseFrameSchema,
@@ -97,6 +110,7 @@ type WorkerRequestParams = {
   "sessions-send": WorkerSessionsSendParams;
   "github-publish": WorkerGitHubPublishParams;
   portal: WorkerPortalParams;
+  computer: WorkerComputerParams;
   "inference-start": WorkerInferenceStartParams;
   "inference-cancel": WorkerInferenceCancelParams;
 };
@@ -108,6 +122,7 @@ type WorkerResponseFrames = {
   "sessions-send": WorkerSessionsSendResponseFrame;
   "github-publish": WorkerGitHubPublishResponseFrame;
   portal: WorkerPortalResponseFrame;
+  computer: WorkerComputerResponseFrame;
   "inference-start": WorkerInferenceStartResponseFrame;
   "inference-cancel": WorkerInferenceCancelResponseFrame;
 };
@@ -214,14 +229,36 @@ export class WorkerConnectionFrameDispatcher {
     const id = randomUUID();
     const spec = WORKER_REQUEST_SPECS[kind];
     const frame = { type: "req", id, method: spec.method, params };
+    const mediaTranscript =
+      kind === "transcript" &&
+      this.options
+        .connectParams()
+        .admission.handshake.protocolFeatures.includes(WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE);
+    if (
+      mediaTranscript &&
+      !isWorkerTranscriptFrameWithinLimits({
+        type: "req",
+        id,
+        method: "worker.transcript.commit",
+        // SAFETY: The generic request kind selects its matching WorkerRequestParams member.
+        params: params as WorkerTranscriptCommitParams,
+      })
+    ) {
+      return Promise.reject(new Error("worker transcript exceeds the protocol payload limit"));
+    }
     const wrappedBeforeResolve = beforeResolve
       ? (response: WorkerResponseFrame) => beforeResolve(response as WorkerResponseFrames[K])
       : undefined;
-    return this.sendRequest(id, frame, {
-      kind,
-      ...(wrappedBeforeResolve ? { beforeResolve: wrappedBeforeResolve } : {}),
-      ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    }) as Promise<WorkerResponseFrames[K]>;
+    return this.sendRequest(
+      id,
+      frame,
+      {
+        kind,
+        ...(wrappedBeforeResolve ? { beforeResolve: wrappedBeforeResolve } : {}),
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      },
+      mediaTranscript,
+    ) as Promise<WorkerResponseFrames[K]>;
   }
 
   private resolvePendingFrame(id: string, pending: PendingRequest, frame: unknown): boolean {
@@ -248,6 +285,7 @@ export class WorkerConnectionFrameDispatcher {
     id: string,
     frame: object,
     value: PendingRequestValue,
+    mediaTranscript: boolean,
   ): Promise<WorkerResponseFrame> {
     const ready = this.options.isReady();
     const readySocket = ready ? this.options.socket() : undefined;
@@ -265,7 +303,7 @@ export class WorkerConnectionFrameDispatcher {
       return Promise.reject(toWorkerConnectionError(error));
     }
     const payloadLimit =
-      value.kind === "inference-start"
+      value.kind === "inference-start" || mediaTranscript
         ? WORKER_PROTOCOL_MAX_INFERENCE_PAYLOAD_BYTES
         : WORKER_PROTOCOL_MAX_PAYLOAD_BYTES;
     if (Buffer.byteLength(encoded, "utf8") > payloadLimit) {

@@ -6,6 +6,7 @@ import {
   WORKER_RPC_SET_VERSION,
 } from "../../packages/gateway-protocol/src/schema/worker-admission.js";
 import { WORKER_INFERENCE_MAX_CONTEXT_MESSAGES } from "../../packages/gateway-protocol/src/schema/worker-inference.js";
+import { WORKER_PROTOCOL_MAX_MEDIA_PAYLOAD_BYTES } from "../../packages/gateway-protocol/src/schema/worker-protocol-primitives.js";
 import { createNoisyPngBuffer } from "../../test/helpers/image-fixtures.js";
 import type { WorkerLaunchDescriptor } from "./launch-descriptor.js";
 import { buildWorkerConnectParams, parseWorkerLaunchDescriptor } from "./launch-descriptor.js";
@@ -65,7 +66,7 @@ describe("worker launch descriptor", () => {
     });
   });
 
-  it("admits current images above the transcript frame ceiling using the inference budget", () => {
+  it("admits current images within the media transcript budget", () => {
     const descriptor = launchDescriptor();
     const images = [
       {
@@ -92,6 +93,10 @@ describe("worker launch descriptor", () => {
       ).toThrow("invalid worker launch descriptor");
     }
     descriptor.assignment.suppressPromptTranscript = false;
+    expect(parseWorkerLaunchDescriptor(descriptor).assignment).toMatchObject({ images });
+    descriptor.assignment.images = [
+      { ...images[0]!, data: "a".repeat(WORKER_PROTOCOL_MAX_MEDIA_PAYLOAD_BYTES) },
+    ];
     expect(() => parseWorkerLaunchDescriptor(descriptor)).toThrow(
       "invalid worker launch descriptor",
     );
@@ -299,6 +304,40 @@ describe("worker launch descriptor", () => {
         parseWorkerLaunchDescriptor({
           ...descriptor,
           assignment: { ...descriptor.assignment, browser: invalidBrowser },
+        }),
+      ).toThrow("invalid worker launch descriptor");
+    }
+  });
+
+  it("requires a computer descriptor and grant together and rejects target substitution fields", () => {
+    const descriptor = launchDescriptor();
+    descriptor.assignment.computer = {
+      nodeId: "worker-desktop",
+      computerUse: {
+        contractVersion: 2,
+        provider: { id: "fixture", label: "Fixture", generation: "generation-1" },
+        actions: ["screenshot"],
+        targets: ["screen"],
+        deliveryModes: ["foreground"],
+        observations: ["image"],
+        features: { recording: false, agentCursor: false, multiDisplay: false },
+      },
+    };
+    expect(() => parseWorkerLaunchDescriptor(descriptor)).toThrow(
+      "invalid worker launch descriptor",
+    );
+    descriptor.assignment.toolAuthority.allowedToolNames = ["computer"];
+    descriptor.assignment.images = [{ type: "image", data: "AA==", mimeType: "image/png" }];
+    expect(parseWorkerLaunchDescriptor(descriptor)).toEqual(descriptor);
+    for (const computer of [
+      undefined,
+      { ...descriptor.assignment.computer, gatewayUrl: "ws://other" },
+      { ...descriptor.assignment.computer, nodeId: "" },
+    ]) {
+      expect(() =>
+        parseWorkerLaunchDescriptor({
+          ...descriptor,
+          assignment: { ...descriptor.assignment, computer },
         }),
       ).toThrow("invalid worker launch descriptor");
     }

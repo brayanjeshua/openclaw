@@ -6,7 +6,7 @@ import type { FastModeAutoProgressState } from "../../agents/fast-mode.js";
 import type { ContextEngineLogicalTurnLease } from "../../agents/harness/context-engine-logical-turn.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import type { ThinkLevel } from "../thinking.js";
+import type { ThinkLevel, ThinkingCatalogEntry } from "../thinking.js";
 import type { AgentLifecycleTerminalBackstop } from "./agent-lifecycle-terminal.js";
 import type {
   AgentTurnInternalResult,
@@ -26,6 +26,7 @@ export type AgentFallbackCandidateCommonParams = {
   runtimeConfig: OpenClawConfig;
   provider: string;
   model: string;
+  selectedModelEntry?: ThinkingCatalogEntry;
   candidateThinkLevel?: ThinkLevel;
   candidateFastMode: Pick<RunEmbeddedAgentParams, "fastMode" | "fastModeAutoOnSeconds">;
   runId: string;

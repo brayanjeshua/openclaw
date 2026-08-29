@@ -1,4 +1,3 @@
-import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import {
   getCliSessionBinding,
@@ -37,11 +36,7 @@ export async function runCliFallbackCandidate(
   bootstrapPromptWarningSignaturesSeen: string[];
 }> {
   const turn = params.turn;
-  const normalizedProvider = normalizeProviderId(params.provider);
-  const selectedModelEntry = turn.followupRun.run.thinkingCatalog?.find(
-    (entry) =>
-      normalizeProviderId(entry.provider) === normalizedProvider && entry.id === params.model,
-  );
+  const selectedModelEntry = params.selectedModelEntry;
   const modelHasVision = Boolean(selectedModelEntry?.input?.includes("image"));
   const sessionKey = turn.sessionKey ?? turn.followupRun.run.sessionKey;
   const sessionTarget =

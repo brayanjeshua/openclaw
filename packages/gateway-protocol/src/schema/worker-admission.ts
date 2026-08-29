@@ -1,5 +1,6 @@
 import { Type, type Static, type TProperties } from "typebox";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "../client-info.js";
+import { WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE } from "../worker-transcript-payload.js";
 import { closedObject } from "./closed-object.js";
 import { FailoverReasonSchema } from "./failover-reason.js";
 import {
@@ -7,11 +8,13 @@ import {
   GitHubPublicationTitleSchema,
 } from "./session-github-publication.js";
 import { withSince } from "./since.js";
+import { WORKER_COMPUTER_PROTOCOL_FEATURE } from "./worker-computer.js";
 import {
   LiveIntegerSchema,
   LiveSequenceSchema,
   LiveTextSchema,
   WORKER_PROTOCOL_MAX_PAYLOAD_BYTES,
+  WORKER_PROTOCOL_MAX_MEDIA_PAYLOAD_BYTES,
   WorkerAdmissionFailureReasonSchema,
   WorkerErrorResponseFrameSchema,
   WorkerErrorShapeSchema,
@@ -43,6 +46,7 @@ export const WORKER_PROTOCOL_METHODS = [
   "worker.sessions.send",
   "worker.github.publish",
   "worker.portal",
+  "worker.computer",
 ] as const;
 export const WORKER_TRANSCRIPT_COMMIT_PROTOCOL_FEATURE = "worker-transcript-commit-v1";
 export const WORKER_LIVE_EVENT_PROTOCOL_FEATURE = "worker-live-event-v1";
@@ -61,6 +65,8 @@ export const WORKER_PROTOCOL_FEATURES = [
   WORKER_SESSION_TOOLS_PROTOCOL_FEATURE,
   WORKER_GITHUB_PUBLICATION_PROTOCOL_FEATURE,
   WORKER_PORTAL_PROTOCOL_FEATURE,
+  WORKER_COMPUTER_PROTOCOL_FEATURE,
+  WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE,
   "worker-inference-v1",
 ] as const;
 export const WORKER_PROTOCOL_MAX_METHOD_LENGTH = 64;
@@ -281,7 +287,7 @@ const WorkerTranscriptThinkingContentSchema = closedObject({
 
 const WorkerTranscriptImageContentSchema = closedObject({
   type: Type.Literal("image"),
-  data: Type.String({ minLength: 1, maxLength: WORKER_PROTOCOL_MAX_PAYLOAD_BYTES }),
+  data: Type.String({ minLength: 1, maxLength: WORKER_PROTOCOL_MAX_MEDIA_PAYLOAD_BYTES }),
   mimeType: Type.String({ minLength: 1, maxLength: 256 }),
 });
 

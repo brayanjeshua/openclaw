@@ -1,5 +1,9 @@
+import { mkdir, realpath } from "node:fs/promises";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKER_LAUNCH_V2_PROTOCOL_FEATURE } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
+import { WORKER_COMPUTER_PROTOCOL_FEATURE } from "../../../packages/gateway-protocol/src/schema/worker-computer.js";
+import { WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE } from "../../../packages/gateway-protocol/src/worker-transcript-payload.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import {
   abortAndDrainEmbeddedAgentRun,
@@ -10,11 +14,18 @@ import {
   loadSessionEntry,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
+import { saveMediaBuffer } from "../../media/store.js";
 import { getPluginRuntimeGatewayRequestScope } from "../../plugins/runtime/gateway-request-scope.js";
+import { runCommandWithTimeout } from "../../process/exec.js";
 import { createChatRunState } from "../server-chat-state.js";
 import { prepareSessionLifecycleDrain } from "../server-methods/sessions-lifecycle-drain.js";
 import type { GatewayRequestContext } from "../server-methods/types.js";
-import { WorkerTunnelOwnerDisconnectedError, type WorkerTunnelHandle } from "./tunnel-contract.js";
+import type { PreparedWorkerComputer } from "./computer-transport.js";
+import {
+  WorkerRunnerCapacityError,
+  WorkerTunnelOwnerDisconnectedError,
+  type WorkerTunnelHandle,
+} from "./tunnel-contract.js";
 import {
   ENVIRONMENT_ID,
   MANIFEST_REF,
@@ -22,6 +33,7 @@ import {
   SESSION_ID,
   SESSION_KEY,
   attachedEnvironment,
+  credential,
   cleanupWorkerTurnLauncherTest,
   createWorkerSessionTurnPlacementProvider,
   placements,
@@ -38,6 +50,85 @@ import { resolveWorkerTurnTranscriptTarget } from "./worker-turn-transcript-targ
 describe("worker turn launcher local placement", () => {
   beforeEach(setupWorkerTurnLauncherTest);
   afterEach(cleanupWorkerTurnLauncherTest);
+
+  it.each([
+    { missingFeature: undefined, modelHasVision: undefined, allowed: true },
+    { missingFeature: undefined, modelHasVision: true, allowed: true },
+    { missingFeature: undefined, modelHasVision: false, allowed: false },
+    { missingFeature: WORKER_COMPUTER_PROTOCOL_FEATURE, modelHasVision: true, allowed: false },
+    {
+      missingFeature: WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE,
+      modelHasVision: true,
+      allowed: false,
+    },
+  ])(
+    "grants computer with negotiated features and model vision (missing: $missingFeature, vision: $modelHasVision)",
+    async ({ missingFeature, modelHasVision, allowed }) => {
+      seedActivePlacement();
+      const environment = attachedEnvironment();
+      environment.bootstrapReceipt!.protocolFeatures.push(
+        ...[WORKER_COMPUTER_PROTOCOL_FEATURE, WORKER_MEDIA_TRANSCRIPT_PROTOCOL_FEATURE].filter(
+          (feature) => feature !== missingFeature,
+        ),
+      );
+      const computer = {
+        nodeId: "worker-desktop",
+        computerUse: {
+          contractVersion: 2 as const,
+          provider: { id: "fixture", label: "Fixture", generation: "generation-1" },
+          actions: ["screenshot" as const],
+          targets: ["screen" as const],
+          deliveryModes: ["foreground" as const],
+          observations: ["image" as const],
+          features: { recording: false, agentCursor: false, multiDisplay: false },
+        },
+      };
+      const bind = vi.fn(() => ({ resolveNode: async () => computer, invoke: vi.fn() }));
+      const prepareComputer = vi.fn(async () => ({
+        descriptor: computer,
+        bind,
+        close: vi.fn(async () => {}),
+      }));
+      const launchTurn = vi.fn<NonNullable<WorkerTunnelHandle["launchTurn"]>>(async ({ plan }) => {
+        expect(plan.assignment.computer).toEqual(allowed ? computer : undefined);
+        expect(plan.assignment.toolAuthority.allowedToolNames.includes("computer")).toBe(allowed);
+        throw new WorkerRunnerCapacityError();
+      });
+      const tunnel: WorkerTunnelHandle = {
+        environmentId: ENVIRONMENT_ID,
+        ownerEpoch: OWNER_EPOCH,
+        launchTurn,
+        runWorkspaceCommand: vi.fn(),
+        quiesceWorkspace: vi.fn(),
+        syncWorkspace: vi.fn(),
+        reconcileWorkspace: vi.fn(),
+        stop: vi.fn(async () => {}),
+      };
+      const environments = {
+        ...unusedEnvironments(),
+        get: vi.fn(() => environment),
+        acquireTurnCredential: vi.fn(async () => credential()),
+        startTunnel: vi.fn(async () => tunnel),
+        prepareComputer,
+      };
+      const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
+      await expect(
+        provider.executeTurn(
+          {
+            sessionId: SESSION_ID,
+            sessionKey: SESSION_KEY,
+            agentId: "main",
+            runId: "run-computer",
+          },
+          { ...turn("run-computer"), toolsAllow: ["computer"], modelHasVision },
+          async () => ({ meta: { durationMs: 1 } }),
+        ),
+      ).rejects.toBeInstanceOf(WorkerRunnerCapacityError);
+      expect(launchTurn).toHaveBeenCalledOnce();
+      expect(prepareComputer).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      expect(bind).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    },
+  );
 
   it("rejects a transcript target without a session incarnation", () => {
     expect(() =>
@@ -463,13 +554,29 @@ describe("worker turn launcher local placement", () => {
   );
 
   it.each([
-    { label: "SSH", nodeDeviceId: undefined, providerId: "fake" },
-    { label: "paired-device", nodeDeviceId: "paired-node-1", providerId: "device" },
-    { label: "cloud-node", nodeDeviceId: "cloud-node-1", providerId: "crabbox" },
+    { label: "SSH", nodeDeviceId: undefined, providerId: "fake", closeFails: false },
+    {
+      label: "paired-device",
+      nodeDeviceId: "paired-node-1",
+      providerId: "device",
+      closeFails: false,
+    },
+    { label: "cloud-node", nodeDeviceId: "cloud-node-1", providerId: "crabbox", closeFails: false },
+    { label: "cloud-node", nodeDeviceId: "cloud-node-1", providerId: "crabbox", closeFails: true },
   ])(
-    "runs a $label remote-exec placement locally and reconciles without launching a worker child",
-    async ({ nodeDeviceId, providerId }) => {
-      seedActivePlacement("remote-exec");
+    "restores a $label remote-exec attachment prompt before computer cleanup (close fails: $closeFails)",
+    async ({ nodeDeviceId, providerId, closeFails }) => {
+      const remote = path.join(await realpath(root), "remote");
+      await mkdir(remote);
+      const bytes = Buffer.from("remote attachment");
+      const saved = await saveMediaBuffer(bytes, "text/plain", "inbound", bytes.length, "note.txt");
+      const inputTurn = {
+        ...turn("run-remote-exec"),
+        transcriptPrompt: "Canonical transcript request",
+        media: [{ path: saved.path, contentType: "text/plain" }],
+      };
+      const originalPrompt = inputTurn.prompt;
+      seedActivePlacement("remote-exec", remote);
       const order: string[] = [];
       const launchTurn = vi.fn();
       const quiesceWorkspace = vi.fn(async () => {
@@ -497,11 +604,43 @@ describe("worker turn launcher local placement", () => {
         environmentId: ENVIRONMENT_ID,
         ownerEpoch: OWNER_EPOCH,
         launchTurn,
-        runWorkspaceCommand: vi.fn(),
+        runWorkspaceCommand: async (command) =>
+          await runCommandWithTimeout([...command.argv], {
+            cwd: remote,
+            input: command.input,
+            timeoutMs: 5_000,
+            signal: command.signal,
+          }),
         quiesceWorkspace,
         syncWorkspace: vi.fn(),
         reconcileWorkspace,
         stop: vi.fn(async () => {}),
+      };
+      const closeComputer = vi.fn(async () => {
+        expect(inputTurn.prompt).toBe(originalPrompt);
+        expect(inputTurn.transcriptPrompt).toBe("Canonical transcript request");
+        order.push("close");
+        if (closeFails) {
+          throw new Error("computer close failed");
+        }
+      });
+      const computer: PreparedWorkerComputer = {
+        descriptor: {
+          nodeId: nodeDeviceId ?? "unused-ssh-node",
+          computerUse: {
+            contractVersion: 2,
+            provider: { id: "fixture", label: "Fixture", generation: "generation-1" },
+            actions: ["screenshot"],
+            targets: ["screen"],
+            deliveryModes: ["foreground"],
+            observations: ["image"],
+            features: { recording: false, agentCursor: false, multiDisplay: false },
+          },
+        },
+        bind: () => {
+          throw new Error("unexpected computer binding");
+        },
+        close: closeComputer,
       };
       const environments: WorkerTurnEnvironmentService = {
         ...unusedEnvironments(),
@@ -511,11 +650,14 @@ describe("worker turn launcher local placement", () => {
             : attachedEnvironment(),
         ),
         startTunnel: vi.fn(async () => tunnel),
+        prepareComputer: vi.fn(async () => (nodeDeviceId ? computer : undefined)),
       };
       const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
       let retainedNodeAuthority: (() => void) | undefined;
       const runLocal = vi.fn(async () => {
         order.push("local");
+        expect(inputTurn.prompt).toContain(`${originalPrompt}\n\nCurrent attachment originals`);
+        expect(inputTurn.transcriptPrompt).toBe("Canonical transcript request");
         if (nodeDeviceId) {
           const assertCurrent = getPluginRuntimeGatewayRequestScope()?.assertNodeExecutionCurrent;
           expect(assertCurrent).toBeTypeOf("function");
@@ -524,7 +666,7 @@ describe("worker turn launcher local placement", () => {
             agentId: "main",
             nodeId: nodeDeviceId,
             workspace: {
-              workspaceDir: "/worker/workspace",
+              workspaceDir: remote,
               environmentId: ENVIRONMENT_ID,
               sessionId: SESSION_ID,
               sessionKey: SESSION_KEY,
@@ -565,18 +707,32 @@ describe("worker turn launcher local placement", () => {
         return { payloads: [{ text: "local remote reply" }], meta: { durationMs: 1 } };
       });
 
-      await provider.executeTurn(
+      const operation = provider.executeTurn(
         {
           sessionId: SESSION_ID,
           sessionKey: SESSION_KEY,
           agentId: "main",
           runId: "run-remote-exec",
         },
-        turn("run-remote-exec"),
+        inputTurn,
         runLocal,
       );
 
-      expect(order).toEqual(["local", "quiesce", "reconcile", "resume"]);
+      if (closeFails) {
+        await expect(operation).rejects.toThrow("computer close failed");
+      } else {
+        await operation;
+      }
+      expect(inputTurn.prompt).toBe(originalPrompt);
+      expect(inputTurn.transcriptPrompt).toBe("Canonical transcript request");
+      expect(closeComputer).toHaveBeenCalledTimes(nodeDeviceId ? 1 : 0);
+      expect(order).toEqual([
+        "local",
+        ...(nodeDeviceId ? ["close"] : []),
+        "quiesce",
+        "reconcile",
+        "resume",
+      ]);
       expect(launchTurn).not.toHaveBeenCalled();
       expect(environments.acquireTurnCredential).not.toHaveBeenCalled();
       expect(placements.listPendingWorkspaceResults()).toEqual([]);
