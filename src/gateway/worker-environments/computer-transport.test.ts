@@ -148,7 +148,7 @@ function createHarness(sharedHost = false, withPolicy = true) {
   };
   const state: {
     placement: WorkerSessionPlacementRecord;
-    environment: Extract<WorkerEnvironmentRecord, { state: "attached" }>;
+    environment: Extract<WorkerEnvironmentRecord, { leaseId: string }>;
     node: NodeSession;
     privateCurrent: boolean;
     context?: GatewayRequestContext;
