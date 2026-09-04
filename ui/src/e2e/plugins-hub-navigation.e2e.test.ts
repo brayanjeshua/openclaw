@@ -100,6 +100,28 @@ const methodResponses = {
   },
 };
 
+const emptyMethodResponses = {
+  ...methodResponses,
+  "skills.proposals.list": {
+    ...methodResponses["skills.proposals.list"],
+    proposals: [],
+  },
+};
+
+const workshopFeatureMethods = [
+  "agents.list",
+  "config.get",
+  "plugins.list",
+  "skills.proposals.historyStatus",
+  "skills.proposals.inspect",
+  "skills.proposals.list",
+  "skills.proposals.apply",
+  "skills.proposals.evaluate",
+  "skills.proposals.reject",
+  "skills.proposals.requestRevision",
+  "skills.status",
+];
+
 type HubGeometry = {
   contentLeft: number;
   contentWidth: number;
@@ -248,6 +270,20 @@ async function expectWorkshopActionsReachable(
     .toBe(true);
 }
 
+async function expectEmptyWorkshopDoesNotScroll(page: Page, emptySelector: string) {
+  const content = page.locator(".content--skill-workshop");
+  const emptyState = page.locator(emptySelector);
+  await emptyState.waitFor({ state: "visible" });
+  expect(await emptyState.evaluate((element) => getComputedStyle(element).minHeight)).toBe("0px");
+  await content.evaluate((element) => element.scrollTo({ top: 0 }));
+  await expect
+    .poll(() => content.evaluate((element) => element.scrollHeight - element.clientHeight))
+    .toBeLessThanOrEqual(1);
+  await content.hover();
+  await page.mouse.wheel(0, 844);
+  expect(await content.evaluate((element) => element.scrollTop)).toBe(0);
+}
+
 async function selectHubTab(
   page: Page,
   name: "Installed" | "Discover" | "Skills" | "Workshop",
@@ -273,19 +309,7 @@ suite.define(() => {
       const context = await createContext(viewport);
       const page = await context.newPage();
       await installMockGateway(page, {
-        featureMethods: [
-          "agents.list",
-          "config.get",
-          "plugins.list",
-          "skills.proposals.historyStatus",
-          "skills.proposals.inspect",
-          "skills.proposals.list",
-          "skills.proposals.apply",
-          "skills.proposals.evaluate",
-          "skills.proposals.reject",
-          "skills.proposals.requestRevision",
-          "skills.status",
-        ],
+        featureMethods: workshopFeatureMethods,
         methodResponses,
       });
 
@@ -367,8 +391,34 @@ suite.define(() => {
           .poll(() => page.locator("#skill-workshop-mode-tab-board").getAttribute("active"))
           .not.toBeNull();
         expectStableGeometry(await hubGeometry(page), installed);
+        const boardLayout = await page.locator(".content--skill-workshop").evaluate((element) => {
+          const style = getComputedStyle(element);
+          return { display: style.display, overflow: style.overflow };
+        });
+        if (viewport.width > 768) {
+          expect(boardLayout).toEqual({ display: "flex", overflow: "hidden" });
+        }
+        if (viewport.width <= 768) {
+          const workshopMinHeight = await page
+            .locator(".sw-hub-panel .skill-workshop")
+            .evaluate((element) => getComputedStyle(element).minHeight);
+          expect(workshopMinHeight).toBe("0px");
+        }
         await captureScreenshot(page, `${label}-05-workshop-board-top.png`);
         await expectWorkshopActionsReachable(page, label, viewport);
+
+        if (label === "narrow") {
+          await page.getByRole("button", { name: /^Applied/u }).click();
+          await captureScreenshot(page, "narrow-07-workshop-board-filter-empty.png");
+          expect(
+            await page
+              .locator(".sw-detail--empty")
+              .evaluate((element) => getComputedStyle(element).minHeight),
+          ).toBe("0px");
+          await page
+            .locator(".content--skill-workshop")
+            .evaluate((element) => element.scrollTo({ top: 0 }));
+        }
 
         await page.locator("#skill-workshop-mode-tab-today").click();
         await expect
@@ -400,4 +450,26 @@ suite.define(() => {
       }
     },
   );
+
+  it("keeps an empty mobile Workshop board from scrolling into blank space", async () => {
+    const context = await createContext({ height: 844, width: 390 });
+    const page = await context.newPage();
+    await installMockGateway(page, {
+      featureMethods: workshopFeatureMethods,
+      methodResponses: emptyMethodResponses,
+    });
+
+    try {
+      await page.goto(`${suite.server.baseUrl}skills/workshop`);
+      await waitForControlUiRoute(page, {
+        pathname: "/skills/workshop",
+        routeId: "skill-workshop",
+      });
+      await page.locator("#skill-workshop-mode-tab-board").click();
+      await captureScreenshot(page, "narrow-empty-workshop-board.png");
+      await expectEmptyWorkshopDoesNotScroll(page, ".sw-empty-state");
+    } finally {
+      await context.close();
+    }
+  });
 });
