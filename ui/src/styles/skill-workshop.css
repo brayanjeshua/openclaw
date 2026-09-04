@@ -1257,6 +1257,8 @@
 }
 
 @media (max-width: 768px) {
+  /* Keep enough queue context to select a proposal and give its detail a full
+     viewport. The tab/flex chain returns to natural height so the page scrolls. */
   .sw-triage {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(96px, 22vh) minmax(80vh, auto);
@@ -1271,7 +1273,9 @@
   }
 
   .sw-hub-panel,
+  #skill-workshop-mode-panel,
   .sw-hub-panel::part(base),
+  #skill-workshop-mode-panel::part(base),
   .skill-workshop,
   .sw-view,
   .sw-view__pane {

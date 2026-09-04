@@ -19,6 +19,19 @@ beforeEach(() => {
   }
 });
 
+const workshopProposal = {
+  id: "mobile-workshop-proof",
+  kind: "create",
+  status: "pending",
+  title: "Mobile Workshop Proof",
+  description: "Keep proposal details and actions reachable on narrow screens.",
+  skillName: "Mobile Workshop Proof",
+  skillKey: "mobile-workshop-proof",
+  createdAt: "2026-08-17T12:00:00.000Z",
+  updatedAt: "2026-08-17T12:00:00.000Z",
+  scanState: "clean",
+};
+
 const methodResponses = {
   "agents.list": {
     agents: [
@@ -63,9 +76,22 @@ const methodResponses = {
     lastScanReviewed: 0,
   },
   "skills.proposals.list": {
-    proposals: [],
+    proposals: [workshopProposal],
     schema: "openclaw.skill-workshop.proposals-manifest.v1",
     updatedAt: "2026-08-17T12:00:00.000Z",
+  },
+  "skills.proposals.inspect": {
+    content:
+      "# Mobile Workshop Proof\n\nKeep proposal details and actions reachable on narrow screens.",
+    record: {
+      ...workshopProposal,
+      proposedVersion: "v1",
+      target: {
+        skillKey: workshopProposal.skillKey,
+        skillName: workshopProposal.skillName,
+      },
+    },
+    supportFiles: [],
   },
   "skills.status": {
     workspaceDir: "/tmp/openclaw-e2e/workspace",
@@ -189,9 +215,37 @@ async function captureScreenshot(page: Page, name: string) {
   }
   await page.screenshot({
     animations: "disabled",
-    fullPage: true,
+    fullPage: false,
     path: path.join(proofDir, name),
   });
+}
+
+async function expectWorkshopActionsReachable(
+  page: Page,
+  label: string,
+  viewport: { height: number; width: number },
+) {
+  const content = page.locator(".content--skill-workshop");
+  const detail = page.locator(".sw-detail__body");
+  const actions = page.locator(".sw-action-bar");
+  await expect.poll(() => detail.textContent()).toContain("Keep proposal details and actions");
+  await actions.waitFor({ state: "attached" });
+
+  if (viewport.width <= 768) {
+    await content.hover();
+    await page.mouse.wheel(0, viewport.height * 2);
+    await captureScreenshot(page, `${label}-06-workshop-board-after-scroll.png`);
+    await expect.poll(() => content.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  }
+
+  await expect
+    .poll(() =>
+      actions.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.bottom > 0 && rect.top < window.innerHeight;
+      }),
+    )
+    .toBe(true);
 }
 
 async function selectHubTab(
@@ -209,9 +263,10 @@ async function selectHubTab(
 suite.define(() => {
   it.each([
     { label: "desktop", viewport: { height: 1053, width: 2048 } },
+    { label: "standard", viewport: { height: 960, width: 1440 } },
     { label: "laptop", viewport: { height: 768, width: 1366 } },
     { label: "tablet", viewport: { height: 1024, width: 768 } },
-    { label: "narrow", viewport: { height: 852, width: 393 } },
+    { label: "narrow", viewport: { height: 844, width: 390 } },
   ])(
     "keeps the hub shell fixed through every $label tab transition",
     async ({ label, viewport }) => {
@@ -223,7 +278,12 @@ suite.define(() => {
           "config.get",
           "plugins.list",
           "skills.proposals.historyStatus",
+          "skills.proposals.inspect",
           "skills.proposals.list",
+          "skills.proposals.apply",
+          "skills.proposals.evaluate",
+          "skills.proposals.reject",
+          "skills.proposals.requestRevision",
           "skills.status",
         ],
         methodResponses,
@@ -307,15 +367,8 @@ suite.define(() => {
           .poll(() => page.locator("#skill-workshop-mode-tab-board").getAttribute("active"))
           .not.toBeNull();
         expectStableGeometry(await hubGeometry(page), installed);
-        const boardLayout = await page.locator(".content--skill-workshop").evaluate((element) => {
-          const style = getComputedStyle(element);
-          return { display: style.display, overflowY: style.overflowY };
-        });
-        expect(boardLayout).toEqual({
-          display: "flex",
-          overflowY: label === "narrow" ? "auto" : "hidden",
-        });
-        await captureScreenshot(page, `${label}-05-workshop-board.png`);
+        await captureScreenshot(page, `${label}-05-workshop-board-top.png`);
+        await expectWorkshopActionsReachable(page, label, viewport);
 
         await page.locator("#skill-workshop-mode-tab-today").click();
         await expect
